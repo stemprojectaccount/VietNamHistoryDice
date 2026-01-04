@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sử Ca - Học Lịch Sử Qua Xúc Xắc</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap');
+      @import url('https://fonts.googleapis.com/css2?family=Merriweather:wght@400;700&display=swap');
+      
+      body {
+        font-family: 'Nunito', sans-serif;
+      }
+      h1, h2, h3, .serif {
+        font-family: 'Merriweather', serif;
+      }
+      
+      /* --- CUSTOM BACKGROUND PATTERNS --- */
+      
+      /* 1. Giấy Dó (Vintage Paper) - Texture */
+      .bg-pattern-vintage {
+        background-color: #fdf6e3;
+        background-image: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.08'/%3E%3C/svg%3E");
+      }
+
+      /* 2. Gốm Sứ (Ceramic) - Blue/White pattern */
+      .bg-pattern-ceramic {
+        background-color: #f0f9ff;
+        background-image: radial-gradient(#bae6fd 1px, transparent 1px), radial-gradient(#bae6fd 1px, #f0f9ff 1px);
+        background-size: 20px 20px;
+        background-position: 0 0, 10px 10px;
+      }
+
+      /* 3. Tre Ngà (Bamboo) - Vertical lines */
+      .bg-pattern-bamboo {
+        background-color: #f7fee7;
+        background-image: repeating-linear-gradient(90deg, transparent, transparent 19px, #d9f99d 20px);
+      }
+
+      /* 4. Cung Đình (Imperial) - Subtle Gold/Red */
+      .bg-pattern-imperial {
+        background-color: #fff7ed;
+        background-image: 
+          linear-gradient(45deg, #ffedd5 25%, transparent 25%, transparent 75%, #ffedd5 75%, #ffedd5),
+          linear-gradient(45deg, #ffedd5 25%, transparent 25%, transparent 75%, #ffedd5 75%, #ffedd5);
+        background-size: 40px 40px;
+        background-position: 0 0, 20px 20px;
+      }
+
+      /* 5. Sóng Biển (Ocean) - Subtle Waves */
+      .bg-pattern-ocean {
+        background-color: #ecfeff;
+        background-image: url("data:image/svg+xml,%3Csvg width='40' height='12' viewBox='0 0 40 12' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 12 Q10 0 20 12 T40 12' fill='none' stroke='%230891b2' stroke-width='1.5' opacity='0.15'/%3E%3C/svg%3E");
+        background-size: 40px 24px;
+        background-position: 0 0;
+      }
+
+      /* --- ANIMATION --- */
+      @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+      @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+      @keyframes scaleIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+      @keyframes pulseFocus { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+      /* Answer Animations */
+      @keyframes shake {
+        10%, 90% { transform: translate3d(-1px, 0, 0); }
+        20%, 80% { transform: translate3d(2px, 0, 0); }
+        30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+        40%, 60% { transform: translate3d(4px, 0, 0); }
+      }
+      
+      @keyframes successPop {
+        0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.7); }
+        50% { transform: scale(1.03); box-shadow: 0 0 20px 0 rgba(74, 222, 128, 0); }
+        100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
+      }
+      
+      /* --- SUPER REALISTIC DICE --- */
+      .scene {
+        perspective: 800px; /* Perspective closer for more 3D impact */
+        position: relative;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 160px; /* Slightly larger stage */
+        width: 160px;
+        filter: drop-shadow(0 20px 30px rgba(0,0,0,0.15)); /* Global ambient shadow */
+      }
+      
+      .cube {
+        width: 100%;
+        height: 100%;
+        position: relative;
+        transform-style: preserve-3d;
+        will-change: transform;
+      }
+      
+      .cube__face {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        border-radius: 24px; /* Slightly tighter corners for cartoon look */
+        
+        /* GOLDEN DICE STYLE - Matches User Request */
+        /* Vibrant Amber/Gold Gradient */
+        background: linear-gradient(135deg, #fcd34d 0%, #f59e0b 50%, #d97706 100%);
+        border: 1px solid #b45309; /* Dark amber border */
+        
+        /* FAKE THICKNESS & BEVEL EFFECT using Box Shadow */
+        box-shadow: 
+          inset 0 0 0 2px rgba(255,255,255,0.4), /* Soft Highlight rim */
+          inset 4px 4px 12px rgba(251, 191, 36, 0.5),   /* Inner glow */
+          inset -4px -4px 12px rgba(120, 53, 15, 0.2); /* Inner shadow */
+          
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        grid-template-rows: repeat(3, 1fr);
+        padding: 16px; /* Spacing for pips */
+        backface-visibility: hidden; /* Hide backface to prevent flickering */
+        /* Smooth rendering */
+        -webkit-font-smoothing: antialiased;
+      }
+      
+      /* Face Transforms (160px size -> 80px translate) */
+      .cube__face--1 { transform: rotateY(  0deg) translateZ(80px); }
+      .cube__face--2 { transform: rotateY( 90deg) translateZ(80px); }
+      .cube__face--3 { transform: rotateY(180deg) translateZ(80px); }
+      .cube__face--4 { transform: rotateY(-90deg) translateZ(80px); }
+      .cube__face--5 { transform: rotateX( 90deg) translateZ(80px); }
+      .cube__face--6 { transform: rotateX(-90deg) translateZ(80px); }
+
+      /* The Pip Container */
+      .dot {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        height: 100%;
+      }
+      
+      /* The Pip (Hole + Paint) - 3D REALISTIC STYLE */
+      .dot-pip {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        
+        /* Deep Dark Brown Base */
+        background-color: #3f1205;
+        
+        /* Gradient to simulate concave depth (darker at top-left/center, lighter at bottom-right) */
+        background-image: radial-gradient(120% 120% at 75% 75%, rgba(255,255,255,0.05) 0%, rgba(0,0,0,0.9) 90%);
+        
+        /* Complex Layered Shadows for 3D indentation */
+        box-shadow: 
+          /* 1. Deep Inner Shadow (Light from Top-Left) */
+          inset 3px 3px 8px rgba(0,0,0,0.95),
+          /* 2. Sharp inner rim definition */
+          inset 1px 1px 2px rgba(0,0,0,0.8),
+          /* 3. Inner Bounce Light (Bottom-Right reflection inside hole) */
+          inset -2px -2px 5px rgba(255,255,255,0.15),
+          /* 4. Outer Rim Highlight (The edge of the hole catching light) */
+          0.5px 0.5px 1px rgba(255,255,255,0.5),
+          /* 5. Outer Rim Shadow */
+          -0.5px -0.5px 1px rgba(60, 20, 0, 0.3);
+          
+        position: relative;
+        will-change: transform;
+      }
+
+      /* Specular Highlight (Glossy reflection of light source) */
+      .dot-pip::after {
+        content: '';
+        display: block;
+        position: absolute;
+        top: 12%;
+        left: 12%;
+        width: 30%;
+        height: 25%;
+        border-radius: 50%;
+        background: radial-gradient(ellipse at center, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0) 70%);
+        filter: blur(1px);
+        transform: rotate(-45deg);
+        pointer-events: none;
+      }
+      
+      /* Dynamic Shadow on the floor */
+      .dice-shadow {
+        position: absolute;
+        width: 140px;
+        height: 24px;
+        background: radial-gradient(50% 50% at 50% 50%, rgba(180, 83, 9, 0.4) 0%, rgba(0,0,0,0) 100%); /* Amber shadow */
+        bottom: -60px;
+        transform: rotateX(90deg) translateZ(0);
+        z-index: -1;
+        filter: blur(8px);
+        transition: all 0.3s ease-out;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.34.0"
+  }
+}
+</script>
+</head>
+  <body class="bg-amber-50 text-slate-900">
+    <div id="root"></div>
+  </body>
+</html>

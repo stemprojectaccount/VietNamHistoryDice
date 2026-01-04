@@ -1,0 +1,5 @@
+{
+  "name": "Sử Ca - Dice History",
+  "description": "Ứng dụng chuyên về học Lịch sử qua trò chơi xúc xắc. Nhập tên, lớp và chủ đề lịch sử bạn muốn (VD: Nhà Thanh, Thế chiến 2) để thử thách kiến thức.",
+  "requestFramePermissions": []
+}
