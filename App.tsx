@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { GameState, Question, HistoryItem } from './types';
-import { generateQuestion } from './services/geminiService';
+import { generateQuestion, generateQuestionImage } from './services/geminiService';
 import Dice from './components/Dice';
 import QuestionCard from './components/QuestionCard';
 import HistoryModal from './components/HistoryModal';
@@ -61,6 +61,7 @@ const App: React.FC = () => {
   const [streak, setStreak] = useState<number>(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isRolling, setIsRolling] = useState(false);
+  const [isImageGenerating, setIsImageGenerating] = useState(false);
   
   // Audio State
   const [isMuted, setIsMuted] = useState<boolean>(false);
@@ -209,6 +210,7 @@ const App: React.FC = () => {
     setIsRolling(true);
     setSelectedAnswerIndex(null);
     setErrorMsg(null);
+    setIsImageGenerating(false);
 
     setTimeout(() => {
       const roll = Math.floor(Math.random() * 6) + 1;
@@ -221,15 +223,37 @@ const App: React.FC = () => {
   // Fetch Question from Gemini
   const fetchQuestion = async (difficulty: number) => {
     setGameState(GameState.FETCHING);
+    setIsImageGenerating(true); // Start "Generating" state for image
+
     try {
       const searchTopic = topic.trim() || "Lịch sử chung";
+      
+      // 1. Fetch Text Question (FAST)
       const question = await generateQuestion(apiKey, searchTopic, difficulty, grade);
+      
+      // 2. Show Question IMMEDIATELY
       setCurrentQuestion(question);
       setGameState(GameState.ANSWERING);
+
+      // 3. Fetch Image in BACKGROUND
+      generateQuestionImage(apiKey, question.text, searchTopic)
+        .then((imageUrl) => {
+           if (imageUrl) {
+             setCurrentQuestion(prev => {
+               if (!prev || prev.text !== question.text) return prev; // Avoid updating if user moved on
+               return { ...prev, imageUrl };
+             });
+           }
+        })
+        .finally(() => {
+           setIsImageGenerating(false);
+        });
+
     } catch (err: any) {
       console.error(err);
       setErrorMsg(err.message || "Lỗi kết nối. Vui lòng thử lại.");
       setGameState(GameState.ERROR);
+      setIsImageGenerating(false);
     }
   };
 
@@ -266,6 +290,7 @@ const App: React.FC = () => {
     setStreak(0);
     setCurrentQuestion(null);
     setSelectedAnswerIndex(null);
+    setIsImageGenerating(false);
   };
 
   const clearHistory = () => {
@@ -669,7 +694,7 @@ const App: React.FC = () => {
                 <div className="w-12 h-12 border-4 border-amber-200 border-t-amber-600 rounded-full animate-spin"></div>
                 <p className="font-medium text-amber-800 flex items-center gap-2">
                    <Zap className="text-amber-500 animate-pulse" size={20} />
-                   Đang tạo câu hỏi và hình minh họa...
+                   Đang tạo câu hỏi...
                 </p>
                 <p className="text-xs text-slate-400">Chủ đề: {topic || "Lịch sử chung"}</p>
               </div>
@@ -686,6 +711,7 @@ const App: React.FC = () => {
                 isMuted={isMuted}
                 volume={volume}
                 apiKey={apiKey}
+                isImageGenerating={isImageGenerating}
               />
             )}
             

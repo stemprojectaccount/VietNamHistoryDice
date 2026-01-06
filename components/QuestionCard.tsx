@@ -12,6 +12,7 @@ interface QuestionCardProps {
   isMuted: boolean;
   volume: number;
   apiKey: string;
+  isImageGenerating?: boolean;
 }
 
 type AudioType = 'question' | 'explanation' | 'hint' | null;
@@ -24,7 +25,8 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
   onRetry,
   isMuted,
   volume,
-  apiKey
+  apiKey,
+  isImageGenerating = false
 }) => {
   const [processingIndex, setProcessingIndex] = useState<number | null>(null);
   const [wrongIndices, setWrongIndices] = useState<number[]>([]);
@@ -460,13 +462,19 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
         <div className="p-6 md:p-8">
           
           {/* Main Question Image */}
-          {question.imageUrl && (
+          {(question.imageUrl || isImageGenerating) && (
             <div 
               ref={imageContainerRef}
               className={`mb-6 rounded-xl overflow-hidden shadow-sm border border-slate-100 relative group bg-slate-100 min-h-[200px] flex items-center justify-center transition-all duration-300 ${!imageError && imageLoaded ? 'cursor-zoom-in' : 'cursor-default'}`}
-              onClick={() => !imageError && imageLoaded && handleZoom(question.imageUrl!)}
+              onClick={() => !imageError && imageLoaded && question.imageUrl && handleZoom(question.imageUrl)}
             >
-               {imageError ? (
+               {/* Display Loader if Generating or if URL exists but not loaded */}
+               {isImageGenerating ? (
+                  <div className="flex flex-col items-center justify-center p-8 text-indigo-400 gap-3">
+                     <Loader2 size={32} className="animate-spin" />
+                     <span className="text-sm font-bold animate-pulse">AI đang vẽ minh họa...</span>
+                  </div>
+               ) : imageError ? (
                  <div className="flex flex-col items-center justify-center p-8 text-slate-400 gap-3">
                     <ImageOff size={32} />
                     <span className="text-sm font-medium">Không thể tải minh họa</span>
@@ -478,18 +486,20 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                         <Loader2 className="animate-spin text-indigo-400 mb-2" size={32} />
                      </div>
                    )}
-                   <img 
-                     ref={imageRef}
-                     src={question.imageUrl} 
-                     alt="Minh họa lịch sử" 
-                     className={`w-full h-auto max-h-[300px] object-cover will-change-transform transition-opacity duration-700 ease-in-out ${imageLoaded ? 'opacity-100' : 'opacity-0'}`}
-                     onLoad={() => setImageLoaded(true)}
-                     onError={() => setImageError(true)}
-                     style={{ transform: 'scale(1.15)' }} 
-                   />
+                   {question.imageUrl && (
+                     <img 
+                       ref={imageRef}
+                       src={question.imageUrl} 
+                       alt="Minh họa lịch sử" 
+                       className={`w-full h-auto max-h-[300px] object-cover will-change-transform transition-opacity duration-700 ease-in-out ${imageLoaded ? 'opacity-100' : 'opacity-0'}`}
+                       onLoad={() => setImageLoaded(true)}
+                       onError={() => setImageError(true)}
+                       style={{ transform: 'scale(1.15)' }} 
+                     />
+                   )}
                  </>
                )}
-               {!imageError && imageLoaded && (
+               {!imageError && imageLoaded && question.imageUrl && (
                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-all duration-300 flex items-center justify-center z-10 pointer-events-none">
                     <Maximize2 className="text-white opacity-0 group-hover:opacity-100 transform scale-75 group-hover:scale-100 transition-all duration-300" size={40} />
                  </div>

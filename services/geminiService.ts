@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Type, Schema, Modality } from "@google/genai";
 import { Question } from '../types';
 
@@ -41,7 +40,8 @@ const questionSchema: Schema = {
 };
 
 // Helper function to generate image based on the question text
-const generateQuestionImage = async (apiKey: string, questionText: string, topic: string): Promise<string | undefined> => {
+// Exported to be called asynchronously
+export const generateQuestionImage = async (apiKey: string, questionText: string, topic: string): Promise<string | undefined> => {
   try {
     const ai = getAI(apiKey);
     const response = await ai.models.generateContent({
@@ -49,7 +49,7 @@ const generateQuestionImage = async (apiKey: string, questionText: string, topic
       contents: {
         parts: [
           {
-            text: `Vẽ một hình ảnh minh họa phong cách tranh vẽ lịch sử, giáo dục cho sự kiện: "${questionText}". Chủ đề: ${topic}. Hình ảnh cần rõ ràng, thực tế, không chứa chữ viết.`
+            text: `Vẽ minh họa lịch sử: "${questionText}". Chủ đề: ${topic}. Phong cách tranh vẽ, không chữ.`
           },
         ],
       },
@@ -83,7 +83,7 @@ export const generateExplanationIllustration = async (apiKey: string, contextTex
       contents: {
         parts: [
           {
-            text: `Tạo một hình ảnh minh họa lịch sử chi tiết và sống động mô tả về: "${contextText}". Chủ đề: ${topic}. Phong cách nghệ thuật cổ điển, trang trọng, không có văn bản trong ảnh.`
+            text: `Minh họa sự kiện lịch sử: "${contextText}". Chủ đề: ${topic}. Nghệ thuật cổ điển, không chữ.`
           },
         ],
       },
@@ -114,10 +114,10 @@ export const generateQuestion = async (apiKey: string, topic: string, difficulty
     ][difficulty - 1];
 
     const prompt = `
-      Bạn là một giáo viên Lịch sử tâm huyết. Hãy tạo một câu hỏi trắc nghiệm Lịch sử bằng tiếng Việt.
+      Bạn là giáo viên Lịch sử. Tạo 1 câu hỏi trắc nghiệm JSON tiếng Việt.
       - Chủ đề: "${topic}"
-      - Học sinh: ${grade}
-      - Độ khó: ${difficulty}/6 (${difficultyText})
+      - Lớp: ${grade}
+      - Độ khó: ${difficulty}/6
     `;
 
     const textResponse = await ai.models.generateContent({
@@ -126,7 +126,9 @@ export const generateQuestion = async (apiKey: string, topic: string, difficulty
       config: {
         responseMimeType: "application/json",
         responseSchema: questionSchema,
-        systemInstruction: "Bạn là Sử Gia AI. Chỉ trả về JSON thuần túy."
+        // Disable thinking for speed on simple/moderate questions
+        thinkingConfig: difficulty <= 4 ? { thinkingBudget: 0 } : undefined, 
+        systemInstruction: "Trả về JSON câu hỏi lịch sử chính xác."
       },
     });
 
@@ -134,7 +136,9 @@ export const generateQuestion = async (apiKey: string, topic: string, difficulty
     textOutput = textOutput.replace(/^```json\s*/, "").replace(/\s*```$/, "");
 
     const json = JSON.parse(textOutput);
-    const imageUrl = await generateQuestionImage(apiKey, json.question, topic);
+    
+    // Note: Image is NO LONGER generated here to speed up initial response time.
+    // It will be handled asynchronously in the UI.
     
     return {
       text: json.question,
@@ -145,7 +149,7 @@ export const generateQuestion = async (apiKey: string, topic: string, difficulty
       topic: topic,
       hint: json.hint || "Hãy đọc kỹ lại câu hỏi và các sự kiện liên quan.",
       funFact: json.funFact || "Lịch sử luôn chứa đựng những điều bất ngờ!",
-      imageUrl: imageUrl
+      imageUrl: undefined // Will be filled later
     };
 
   } catch (error: any) {
