@@ -4,6 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Sử Ca - Học Lịch Sử Qua Xúc Xắc</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap');
@@ -11,6 +13,7 @@
       
       body {
         font-family: 'Nunito', sans-serif;
+        -webkit-tap-highlight-color: transparent; /* Loại bỏ highlight khi tap trên mobile */
       }
       h1, h2, h3, .serif {
         font-family: 'Merriweather', serif;
@@ -93,7 +96,7 @@
         height: 100%;
         position: relative;
         transform-style: preserve-3d;
-        will-change: transform;
+        will-change: transform; /* Hint to browser for GPU optimization */
       }
       
       .cube__face {

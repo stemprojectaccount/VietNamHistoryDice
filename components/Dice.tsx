@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 
 interface DiceProps {
   value: number;
@@ -7,7 +7,7 @@ interface DiceProps {
   volume: number;
 }
 
-const Dice: React.FC<DiceProps> = ({ value, isRolling, isMuted, volume }) => {
+const Dice: React.FC<DiceProps> = React.memo(({ value, isRolling, isMuted, volume }) => {
   const cubeRef = useRef<HTMLDivElement>(null);
   
   // Store accumulated rotation to ensure smooth forward spinning
@@ -18,42 +18,69 @@ const Dice: React.FC<DiceProps> = ({ value, isRolling, isMuted, volume }) => {
   const [transformStyle, setTransformStyle] = useState('rotateX(-25deg) rotateY(35deg)');
   const [transitionStyle, setTransitionStyle] = useState('transform 1s');
 
-  // --- AUDIO LOGIC (Web Audio API) ---
+  // --- AUDIO LOGIC (OPTIMIZED) ---
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const noiseBufferRef = useRef<AudioBuffer | null>(null);
+
+  // Initialize Audio Context and Noise Buffer once on mount
+  useEffect(() => {
+    const initAudio = () => {
+      try {
+        const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AudioContext) return;
+        
+        const ctx = new AudioContext();
+        audioContextRef.current = ctx;
+
+        // Pre-calculate White Noise Buffer (Singleton pattern for buffer)
+        const bufferSize = ctx.sampleRate * 2; // 2 seconds buffer
+        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.random() * 2 - 1;
+        }
+        noiseBufferRef.current = buffer;
+      } catch (e) {
+        console.error("Audio init failed", e);
+      }
+    };
+
+    initAudio();
+
+    return () => {
+      if (audioContextRef.current) {
+        audioContextRef.current.close();
+      }
+    };
+  }, []);
+
   const playDiceSound = (type: 'roll' | 'land') => {
-    if (isMuted || volume <= 0) return;
+    if (isMuted || volume <= 0 || !audioContextRef.current || !noiseBufferRef.current) return;
 
     try {
-      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioContext) return;
+      const ctx = audioContextRef.current;
       
-      const ctx = new AudioContext();
-      const t = ctx.currentTime;
-
-      // Helper: Create White Noise Buffer for realistic texture
-      // Dice sounds are percussive noise, not tonal notes.
-      const bufferSize = ctx.sampleRate * 2; // 2 seconds buffer
-      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-      const data = buffer.getChannelData(0);
-      for (let i = 0; i < bufferSize; i++) {
-        data[i] = Math.random() * 2 - 1;
+      // Resume context if suspended (browser policy)
+      if (ctx.state === 'suspended') {
+        ctx.resume();
       }
+
+      const t = ctx.currentTime;
+      const buffer = noiseBufferRef.current;
 
       // Helper to play a noise burst
       const playNoiseBurst = (startTime: number, duration: number, filterFreq: number, gainVal: number) => {
         const noise = ctx.createBufferSource();
         noise.buffer = buffer;
         
-        // Filter to make it sound like plastic (Highpass/Bandpass)
         const filter = ctx.createBiquadFilter();
         filter.type = 'highpass';
         filter.frequency.value = filterFreq;
 
         const gain = ctx.createGain();
-        
-        // Envelope
         gain.gain.setValueAtTime(0, startTime);
-        gain.gain.linearRampToValueAtTime(gainVal, startTime + 0.005); // Attack
-        gain.gain.exponentialRampToValueAtTime(0.01, startTime + duration); // Decay
+        gain.gain.linearRampToValueAtTime(gainVal, startTime + 0.005);
+        gain.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
 
         noise.connect(filter);
         filter.connect(gain);
@@ -64,11 +91,8 @@ const Dice: React.FC<DiceProps> = ({ value, isRolling, isMuted, volume }) => {
       };
 
       if (type === 'land') {
-        // REALISTIC LANDING: Hard plastic impact
-        // 1. Sharp Noise "Crack"
         playNoiseBurst(t, 0.08, 1200, 0.8 * volume);
 
-        // 2. Lower Body "Thud" (Resonance)
         const oscLow = ctx.createOscillator();
         const gainLow = ctx.createGain();
         oscLow.type = 'triangle';
@@ -84,17 +108,12 @@ const Dice: React.FC<DiceProps> = ({ value, isRolling, isMuted, volume }) => {
         oscLow.stop(t + 0.2);
 
       } else if (type === 'roll') {
-        // REALISTIC ROLLING: Shaking in hand/cup
-        // Multiple small, random noise bursts
-        
         const count = 6; 
         for (let i = 0; i < count; i++) {
           const startTime = t + (Math.random() * 0.6);
-          // Varying pitch/filter for chaos
           const freq = 800 + Math.random() * 1000;
           const vol = (0.1 + Math.random() * 0.2) * volume;
           const dur = 0.03 + Math.random() * 0.02;
-          
           playNoiseBurst(startTime, dur, freq, vol);
         }
       }
@@ -116,7 +135,6 @@ const Dice: React.FC<DiceProps> = ({ value, isRolling, isMuted, volume }) => {
   };
 
   useEffect(() => {
-    // Only play sound on state change to avoid loops
     if (isRolling && !prevRollingRef.current) {
       playDiceSound('roll');
     } else if (!isRolling && prevRollingRef.current) {
@@ -125,13 +143,10 @@ const Dice: React.FC<DiceProps> = ({ value, isRolling, isMuted, volume }) => {
     prevRollingRef.current = isRolling;
 
     if (isRolling) {
-      // --- TOSS PHASE ---
-      // More energetic spins (3-5 full rotations)
       const spins = 4 + Math.random() * 2;
-      
       const randomSpinX = (Math.random() * 360 * spins) + 1080;
       const randomSpinY = (Math.random() * 360 * spins) + 1080;
-      const randomSpinZ = (Math.random() * 90) - 45; // More tilt during air time
+      const randomSpinZ = (Math.random() * 90) - 45;
 
       rotationRef.current = {
         x: rotationRef.current.x + randomSpinX,
@@ -139,39 +154,32 @@ const Dice: React.FC<DiceProps> = ({ value, isRolling, isMuted, volume }) => {
         z: rotationRef.current.z + randomSpinZ
       };
 
-      // cubic-bezier(0.1, 0.7, 0.1, 1) -> Fast start, smooth slow down at top
       setTransitionStyle('transform 1.2s cubic-bezier(0.1, 0.7, 0.1, 1)');
-      
-      // Toss Higher and Closer
       setTransformStyle(`translateY(-220px) scale(1.5) rotateX(${rotationRef.current.x}deg) rotateY(${rotationRef.current.y}deg) rotateZ(${rotationRef.current.z}deg)`);
 
     } else {
-      // --- LANDING PHASE ---
       const base = getTargetRotation(value);
       
       const snapToGrid = (current: number, targetBase: number) => {
         const currentRotations = Math.floor(current / 360);
-        return (currentRotations * 360) + targetBase + 1080; // Add extra spins to ensure forward motion
+        return (currentRotations * 360) + targetBase + 1080;
       };
 
       const finalX = snapToGrid(rotationRef.current.x, base.x);
       const finalY = snapToGrid(rotationRef.current.y, base.y);
-      const finalZ = 0; // Always lands flat
+      const finalZ = 0; 
 
       rotationRef.current = { x: finalX, y: finalY, z: finalZ };
 
-      // Micro-tilt for realism (imperfect landing)
       const microTilt = (Math.random() - 0.5) * 6;
 
-      // Elastic landing with bounce/squash
       setTransitionStyle('transform 0.5s cubic-bezier(0.34, 1.3, 0.64, 1)');
-      
       setTransformStyle(`translateY(0px) scale(1) rotateX(${finalX + microTilt}deg) rotateY(${finalY + microTilt}deg) rotateZ(${finalZ}deg)`);
     }
   }, [value, isRolling]);
 
-  const renderFace = (faceNumber: number) => {
-    const dots = [];
+  // Memoize face rendering logic
+  const renderFace = useMemo(() => (faceNumber: number) => {
     const configs: {[key: number]: number[]} = {
       1: [4],
       2: [2, 6], 
@@ -180,17 +188,13 @@ const Dice: React.FC<DiceProps> = ({ value, isRolling, isMuted, volume }) => {
       5: [0, 2, 4, 6, 8],
       6: [0, 2, 3, 5, 6, 8]
     };
-
     const visibleDots = configs[faceNumber] || [];
-    for (let i = 0; i < 9; i++) {
-      dots.push(
-        <div key={i} className="dot">
-          {visibleDots.includes(i) && <div className="dot-pip"></div>}
-        </div>
-      );
-    }
-    return dots;
-  };
+    return Array.from({ length: 9 }).map((_, i) => (
+      <div key={i} className="dot">
+        {visibleDots.includes(i) && <div className="dot-pip"></div>}
+      </div>
+    ));
+  }, []);
 
   return (
     <div className="my-10 scene mx-auto z-10">
@@ -210,18 +214,16 @@ const Dice: React.FC<DiceProps> = ({ value, isRolling, isMuted, volume }) => {
         <div className="cube__face cube__face--6">{renderFace(6)}</div>
       </div>
       
-      {/* Shadow */}
       <div 
         className="dice-shadow" 
         style={{
           opacity: isRolling ? 0.2 : 0.5,
           transform: isRolling ? 'rotateX(90deg) scale(0.5)' : 'rotateX(90deg) scale(1)',
-          // Match the cube transition for synchronized squash/stretch shadow effect
           transition: isRolling ? 'all 1.2s ease-out' : 'all 0.5s cubic-bezier(0.34, 1.3, 0.64, 1)'
         }}
       ></div>
     </div>
   );
-};
+});
 
 export default Dice;

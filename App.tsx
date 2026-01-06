@@ -202,6 +202,41 @@ const App: React.FC = () => {
 
   }, [score, streak, history, studentName, grade, topic, isMuted, volume, gameState, currentRoll, currentQuestion, selectedAnswerIndex, apiKey, isUsingEnvKey, bgId]);
 
+  // Fetch Question from Gemini
+  // Memoized to prevent recreation on every render
+  const fetchQuestion = useCallback(async (difficulty: number) => {
+    setGameState(GameState.FETCHING);
+    setIsImageGenerating(true); 
+
+    try {
+      const searchTopic = topic.trim() || "Lịch sử chung";
+      
+      const question = await generateQuestion(apiKey, searchTopic, difficulty, grade);
+      
+      setCurrentQuestion(question);
+      setGameState(GameState.ANSWERING);
+
+      generateQuestionImage(apiKey, question.text, searchTopic)
+        .then((imageUrl) => {
+           if (imageUrl) {
+             setCurrentQuestion(prev => {
+               if (!prev || prev.text !== question.text) return prev; 
+               return { ...prev, imageUrl };
+             });
+           }
+        })
+        .finally(() => {
+           setIsImageGenerating(false);
+        });
+
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg(err.message || "Lỗi kết nối. Vui lòng thử lại.");
+      setGameState(GameState.ERROR);
+      setIsImageGenerating(false);
+    }
+  }, [apiKey, topic, grade]);
+
   // Dice Roll Logic
   const handleRoll = useCallback(() => {
     if (gameState === GameState.ROLLING) return;
@@ -218,47 +253,10 @@ const App: React.FC = () => {
       setIsRolling(false);
       fetchQuestion(roll);
     }, 1500);
-  }, [gameState, topic, grade]);
-
-  // Fetch Question from Gemini
-  const fetchQuestion = async (difficulty: number) => {
-    setGameState(GameState.FETCHING);
-    setIsImageGenerating(true); // Start "Generating" state for image
-
-    try {
-      const searchTopic = topic.trim() || "Lịch sử chung";
-      
-      // 1. Fetch Text Question (FAST)
-      const question = await generateQuestion(apiKey, searchTopic, difficulty, grade);
-      
-      // 2. Show Question IMMEDIATELY
-      setCurrentQuestion(question);
-      setGameState(GameState.ANSWERING);
-
-      // 3. Fetch Image in BACKGROUND
-      generateQuestionImage(apiKey, question.text, searchTopic)
-        .then((imageUrl) => {
-           if (imageUrl) {
-             setCurrentQuestion(prev => {
-               if (!prev || prev.text !== question.text) return prev; // Avoid updating if user moved on
-               return { ...prev, imageUrl };
-             });
-           }
-        })
-        .finally(() => {
-           setIsImageGenerating(false);
-        });
-
-    } catch (err: any) {
-      console.error(err);
-      setErrorMsg(err.message || "Lỗi kết nối. Vui lòng thử lại.");
-      setGameState(GameState.ERROR);
-      setIsImageGenerating(false);
-    }
-  };
+  }, [gameState, fetchQuestion]); // Added fetchQuestion to dependencies
 
   // Handle Answer Selection
-  const handleAnswer = (index: number, isRetry: boolean) => {
+  const handleAnswer = useCallback((index: number, isRetry: boolean) => {
     if (gameState !== GameState.ANSWERING || !currentQuestion) return;
     
     setSelectedAnswerIndex(index);
@@ -282,7 +280,7 @@ const App: React.FC = () => {
     } else {
       setStreak(0);
     }
-  };
+  }, [gameState, currentQuestion]); // Optimized dependencies
 
   const resetGame = () => {
     setGameState(GameState.SETUP);

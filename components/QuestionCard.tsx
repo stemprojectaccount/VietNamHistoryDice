@@ -17,7 +17,7 @@ interface QuestionCardProps {
 
 type AudioType = 'question' | 'explanation' | 'hint' | null;
 
-const QuestionCard: React.FC<QuestionCardProps> = ({ 
+const QuestionCard: React.FC<QuestionCardProps> = React.memo(({ 
   question, 
   selectedAnswerIndex, 
   onSelectAnswer, 
@@ -708,6 +708,6 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
       )}
     </>
   );
-};
+});
 
 export default QuestionCard;
