@@ -185,7 +185,19 @@ const HistoryModal: React.FC<HistoryModalProps> = ({
                     </div>
                     
                     {/* Question */}
-                    <h3 className="font-bold text-slate-800 mb-3 text-lg">{item.question.text}</h3>
+                    <div className="flex flex-col md:flex-row gap-4 mb-3">
+                      {item.question.imageUrl && (
+                        <div className="w-full md:w-32 h-24 flex-shrink-0 rounded-lg overflow-hidden border border-slate-200">
+                          <img 
+                            src={item.question.imageUrl} 
+                            alt="Minh họa" 
+                            className="w-full h-full object-cover"
+                            referrerPolicy="no-referrer"
+                          />
+                        </div>
+                      )}
+                      <h3 className="font-bold text-slate-800 text-lg flex-1">{item.question.text}</h3>
+                    </div>
                     
                     {/* Answers Comparison */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">

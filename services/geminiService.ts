@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type, Schema, Modality } from "@google/genai";
+import { GoogleGenAI, Type, Schema, Modality, ThinkingLevel } from "@google/genai";
 import { Question } from '../types';
 
 // Helper to get AI instance dynamically
@@ -37,73 +37,6 @@ const questionSchema: Schema = {
     }
   },
   required: ["question", "options", "correctAnswerIndex", "explanation", "hint", "funFact"],
-};
-
-// Helper function to generate image based on the question text
-// Exported to be called asynchronously
-export const generateQuestionImage = async (apiKey: string, questionText: string, topic: string): Promise<string | undefined> => {
-  try {
-    const ai = getAI(apiKey);
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
-      contents: {
-        parts: [
-          {
-            text: `Vẽ minh họa lịch sử: "${questionText}". Chủ đề: ${topic}. Phong cách tranh vẽ, không chữ.`
-          },
-        ],
-      },
-      config: {
-        imageConfig: {
-          aspectRatio: "16:9",
-        }
-      },
-    });
-
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        return `data:image/png;base64,${part.inlineData.data}`;
-      }
-    }
-    return undefined;
-  } catch (error) {
-    console.warn("Image generation failed:", error);
-    return undefined; 
-  }
-};
-
-/**
- * Generates an illustration for the explanation or fun fact
- */
-export const generateExplanationIllustration = async (apiKey: string, contextText: string, topic: string): Promise<string | undefined> => {
-  try {
-    const ai = getAI(apiKey);
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
-      contents: {
-        parts: [
-          {
-            text: `Minh họa sự kiện lịch sử: "${contextText}". Chủ đề: ${topic}. Nghệ thuật cổ điển, không chữ.`
-          },
-        ],
-      },
-      config: {
-        imageConfig: {
-          aspectRatio: "16:9",
-        }
-      },
-    });
-
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        return `data:image/png;base64,${part.inlineData.data}`;
-      }
-    }
-    return undefined;
-  } catch (error) {
-    console.warn("Explanation image generation failed:", error);
-    return undefined;
-  }
 };
 
 export const generateQuestion = async (apiKey: string, topic: string, difficulty: number, grade: string): Promise<Question> => {
@@ -155,6 +88,37 @@ export const generateQuestion = async (apiKey: string, topic: string, difficulty
   } catch (error: any) {
     console.error("Gemini API Error:", error);
     throw new Error(error.message || "Không thể tạo câu hỏi lúc này.");
+  }
+};
+
+export const generateImage = async (apiKey: string, prompt: string): Promise<string | undefined> => {
+  try {
+    const ai = getAI(apiKey);
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-image',
+      contents: {
+        parts: [
+          {
+            text: `A detailed, historical illustration for a history quiz. Topic: ${prompt}. Style: Realistic, educational, clear subject.`,
+          },
+        ],
+      },
+      config: {
+        imageConfig: {
+          aspectRatio: "16:9",
+        },
+      },
+    });
+    
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) {
+        return `data:image/png;base64,${part.inlineData.data}`;
+      }
+    }
+    return undefined;
+  } catch (error) {
+    console.error("Image generation failed:", error);
+    return undefined;
   }
 };
 

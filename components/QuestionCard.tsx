@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Question } from '../types';
-import { CheckCircle, XCircle, HelpCircle, RefreshCw, Lightbulb, Sparkles, Image as ImageIcon, Maximize2, X, Volume2, Square, Loader2, ImageOff, RotateCcw } from 'lucide-react';
-import { generateSpeechFromText, generateExplanationIllustration } from '../services/geminiService';
+import { CheckCircle, XCircle, HelpCircle, RefreshCw, Lightbulb, Sparkles, Maximize2, X, Volume2, Square, Loader2, RotateCcw } from 'lucide-react';
+import { generateSpeechFromText } from '../services/geminiService';
 
 interface QuestionCardProps {
   question: Question;
@@ -12,10 +12,60 @@ interface QuestionCardProps {
   isMuted: boolean;
   volume: number;
   apiKey: string;
-  isImageGenerating?: boolean;
+  pointsEarned: number | null;
+  onRefresh?: () => void;
 }
 
-type AudioType = 'question' | 'explanation' | 'hint' | null;
+type AudioType = 'question' | 'explanation' | 'hint' | 'option-0' | 'option-1' | 'option-2' | 'option-3' | null;
+
+// --- Custom Hook for Parallax Effect ---
+const useParallax = () => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+
+  useEffect(() => {
+    let animationFrameId: number;
+
+    const update = () => {
+      if (!containerRef.current || !imgRef.current) return;
+      
+      const rect = containerRef.current.getBoundingClientRect();
+      const viewHeight = window.innerHeight;
+
+      // Only calculate if the image is in the viewport
+      if (rect.top <= viewHeight && rect.bottom >= 0) {
+        // Speed factor: Lower is more subtle (0.05 = 5% of scroll speed)
+        const speed = 0.05; 
+        
+        // Calculate offset from the center of the viewport
+        const centerOffset = (viewHeight / 2) - (rect.top + rect.height / 2);
+        const y = centerOffset * speed;
+        
+        // Apply transform: Scale is needed to prevent edges from showing
+        imgRef.current.style.transform = `scale(1.15) translate3d(0, ${y}px, 0)`;
+      }
+    };
+
+    const onScroll = () => {
+      cancelAnimationFrame(animationFrameId);
+      animationFrameId = requestAnimationFrame(update);
+    };
+
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    
+    // Initial calculation
+    update();
+
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, []);
+
+  return { containerRef, imgRef };
+};
 
 const QuestionCard: React.FC<QuestionCardProps> = React.memo(({ 
   question, 
@@ -26,21 +76,13 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
   isMuted,
   volume,
   apiKey,
-  isImageGenerating = false
+  pointsEarned,
+  onRefresh
 }) => {
   const [processingIndex, setProcessingIndex] = useState<number | null>(null);
   const [wrongIndices, setWrongIndices] = useState<number[]>([]);
-  const [isZoomed, setIsZoomed] = useState(false);
-  const [zoomImageUrl, setZoomImageUrl] = useState<string | null>(null);
-  
-  // Image Loading State
-  const [imageError, setImageError] = useState(false);
-  const [imageLoaded, setImageLoaded] = useState(false);
-
-  // Explanation Image State
-  const [explanationImageUrl, setExplanationImageUrl] = useState<string | null>(null);
-  const [isGeneratingExplImg, setIsGeneratingExplImg] = useState(false);
-  const [explImgLoaded, setExplImgLoaded] = useState(false);
+  const [hasFailed, setHasFailed] = useState(false);
+  const [isRetryAttempt, setIsRetryAttempt] = useState(false);
   
   // Audio State
   const [isAudioLoading, setIsAudioLoading] = useState(false);
@@ -56,39 +98,18 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
   const startedAtRef = useRef<number>(0); 
   const isMounted = useRef(true);
 
-  // Refs for Parallax Effect
-  const imageContainerRef = useRef<HTMLDivElement>(null);
-  const imageRef = useRef<HTMLImageElement>(null);
+  // Use Parallax Hook for Main Image
+  const { containerRef: imageContainerRef, imgRef: imageRef } = useParallax();
 
   // Reset states when question changes
   useEffect(() => {
-    setImageError(false);
-    setImageLoaded(false);
-    setExplanationImageUrl(null);
-    setIsGeneratingExplImg(false);
-    setExplImgLoaded(false);
     setWrongIndices([]);
     setProcessingIndex(null);
+    setHasFailed(false);
+    setIsRetryAttempt(false);
   }, [question]);
 
   const isCorrectFinal = isAnswered && selectedAnswerIndex === question.correctAnswerIndex;
-
-  // Generate explanation image when answer is revealed
-  useEffect(() => {
-    if (isAnswered && !explanationImageUrl && !isGeneratingExplImg) {
-      const generateIllustration = async () => {
-        setIsGeneratingExplImg(true);
-        // Illustrate funFact if correct, else explanation
-        const promptText = isCorrectFinal ? question.funFact : question.explanation;
-        const url = await generateExplanationIllustration(apiKey, promptText, question.topic);
-        if (isMounted.current) {
-          setExplanationImageUrl(url || null);
-          setIsGeneratingExplImg(false);
-        }
-      };
-      generateIllustration();
-    }
-  }, [isAnswered, explanationImageUrl, isGeneratingExplImg, apiKey, question, isCorrectFinal]);
 
   // --- AUDIO HELPERS ---
   const decodeBase64Audio = (base64: string): Uint8Array => {
@@ -120,9 +141,15 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
         audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       }
       const ctx = audioContextRef.current;
+      
+      // Stop previous source if exists
       if (audioSourceRef.current) {
-        try { audioSourceRef.current.stop(); } catch(e) {}
+        try { 
+          audioSourceRef.current.onended = null;
+          audioSourceRef.current.stop(); 
+        } catch(e) {}
       }
+
       const source = ctx.createBufferSource();
       source.buffer = buffer;
       const gainNode = ctx.createGain();
@@ -131,9 +158,12 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
       source.connect(gainNode);
       gainNode.connect(ctx.destination);
       audioSourceRef.current = source;
+      
       startedAtRef.current = ctx.currentTime - offset;
+      
       source.start(0, offset);
       if (isMounted.current) setIsPlayingAI(true);
+      
       source.onended = () => {
         if (isMounted.current) {
           setIsPlayingAI(false);
@@ -184,8 +214,13 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
   const handleRewind = () => {
     if (!audioContextRef.current || !currentAudioBufferRef.current || !isPlayingAI) return;
     const ctx = audioContextRef.current;
+    
+    // Calculate elapsed time based on the "virtual" start time
     const elapsed = ctx.currentTime - startedAtRef.current;
+    
+    // Rewind 5 seconds, clamping to 0
     const newTime = Math.max(0, elapsed - 5);
+    
     playAudioBuffer(currentAudioBufferRef.current, newTime);
   };
 
@@ -196,7 +231,7 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
     setPlayingType(isCorrect ? 'explanation' : 'hint');
     let script = isCorrect 
       ? `Chính xác! ${question.explanation} Và bạn có biết: ${question.funFact}`
-      : `Chưa đúng rồi. ${question.explanation}`;
+      : `Chưa đúng rồi. Gợi ý cho bạn: ${question.hint}`;
     const base64 = await generateSpeechFromText(apiKey, script);
     if (!isMounted.current) return;
     setIsAudioLoading(false);
@@ -216,6 +251,19 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
     else setPlayingType(null);
   };
 
+  const triggerOptionVoice = async (index: number) => {
+    if (!isMounted.current) return;
+    stopAIAudio();
+    setIsAudioLoading(true);
+    const type = `option-${index}` as AudioType;
+    setPlayingType(type);
+    const base64 = await generateSpeechFromText(apiKey, `Lựa chọn ${String.fromCharCode(65 + index)}: ${question.options[index]}`);
+    if (!isMounted.current) return;
+    setIsAudioLoading(false);
+    if (base64) processAndPlayPCM(base64);
+    else setPlayingType(null);
+  };
+
   useEffect(() => {
     isMounted.current = true;
     return () => {
@@ -227,34 +275,6 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
       }
     };
   }, []);
-
-  // Parallax Effect Logic
-  useEffect(() => {
-    if (imageError || !imageLoaded) return;
-    let animationFrameId: number;
-    const updateParallax = () => {
-      if (!imageContainerRef.current || !imageRef.current) return;
-      const rect = imageContainerRef.current.getBoundingClientRect();
-      const windowHeight = window.innerHeight;
-      if (rect.top <= windowHeight && rect.bottom >= 0) {
-        const centerOffset = (windowHeight / 2) - (rect.top + rect.height / 2);
-        const parallaxY = centerOffset * 0.1;
-        imageRef.current.style.transform = `translate3d(0, ${parallaxY}px, 0) scale(1.15)`;
-      }
-    };
-    const onScroll = () => {
-      cancelAnimationFrame(animationFrameId);
-      animationFrameId = requestAnimationFrame(updateParallax);
-    };
-    window.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', updateParallax);
-    updateParallax();
-    return () => {
-      window.removeEventListener('scroll', onScroll);
-      window.removeEventListener('resize', updateParallax);
-      cancelAnimationFrame(animationFrameId);
-    };
-  }, [question.imageUrl, imageError, imageLoaded]);
 
   const difficultyColors = [
     "bg-green-100 text-green-800 border-green-200", 
@@ -385,7 +405,7 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
   };
 
   const handleSelection = (index: number) => {
-    if (isAnswered || processingIndex !== null || wrongIndices.includes(index)) return;
+    if (isAnswered || processingIndex !== null || wrongIndices.includes(index) || (hasFailed && !isAnswered)) return;
     playSelectSound();
     stopAIAudio();
     setProcessingIndex(index);
@@ -394,13 +414,32 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
       playFeedbackSound(isCorrect);
       setProcessingIndex(null);
       if (isCorrect) {
-        onSelectAnswer(index, wrongIndices.length > 0);
+        onSelectAnswer(index, isRetryAttempt);
         if (!isMuted && volume > 0) triggerAIVoice(true);
       } else {
         setWrongIndices(prev => [...prev, index]);
-        if (!isMuted && volume > 0) triggerAIVoice(false);
+        if (isRetryAttempt) {
+          // Final fail
+          onSelectAnswer(index, true);
+          if (!isMuted && volume > 0) triggerAIVoice(false);
+        } else {
+          // First fail - allow retry
+          setHasFailed(true);
+          if (!isMuted && volume > 0) triggerAIVoice(false);
+        }
       }
     }, 600);
+  };
+
+  const handleRetryQuestion = () => {
+    playRetrySound();
+    stopAIAudio();
+    setHasFailed(false);
+    setIsRetryAttempt(true);
+    // We don't clear wrongIndices because we want to show they were wrong before?
+    // Actually, the prompt says "re-attempt the same question". 
+    // Usually that means they get a fresh start or at least can pick again.
+    // Let's clear the processing state but keep the UI clean.
   };
 
   const handleRetryClick = () => {
@@ -409,104 +448,33 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
     onRetry();
   };
 
-  const handleZoom = (url: string) => {
-    setZoomImageUrl(url);
-    setIsZoomed(true);
-  };
-
-  // Helper component for AI Illustration to avoid repetition
-  const AIIllustration = ({ url, isGenerating, isLoaded, setIsLoaded }: any) => {
-    if (!isGenerating && !url) return null;
-    return (
-      <div 
-        className="w-full md:w-56 h-40 md:h-40 flex-shrink-0 bg-white/20 rounded-xl overflow-hidden relative shadow-md border border-white/30 cursor-pointer group/expl"
-        onClick={() => url && handleZoom(url)}
-      >
-        {isGenerating ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center text-white/70 bg-black/5 backdrop-blur-sm">
-            <Loader2 size={24} className="animate-spin mb-1" />
-            <span className="text-[10px] font-bold uppercase tracking-tighter">AI đang vẽ...</span>
-          </div>
-        ) : (
-          url && (
-            <>
-              {!isLoaded && <div className="absolute inset-0 flex items-center justify-center bg-slate-200/50"><Loader2 size={16} className="animate-spin" /></div>}
-              <img 
-                src={url} 
-                alt="Minh họa AI" 
-                className={`w-full h-full object-cover transition-all duration-700 group-hover/expl:scale-110 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}
-                onLoad={() => setIsLoaded(true)}
-              />
-              <div className="absolute bottom-2 right-2 bg-black/60 backdrop-blur-md text-[9px] text-white px-2 py-0.5 rounded-full font-bold uppercase border border-white/20">AI Art</div>
-            </>
-          )
-        )}
-      </div>
-    );
-  };
-
   return (
     <>
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-200 animate-[fadeIn_0.5s_ease-out]">
+      <div className="w-full max-w-4xl bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-200 animate-[fadeIn_0.5s_ease-out]">
         <style>{customKeyframes}</style>
         
         {/* Header */}
-        <div className="bg-slate-50 p-6 border-b border-slate-100 flex justify-between items-center">
-          <span className={`px-3 py-1 rounded-full text-xs font-bold border uppercase tracking-wider ${difficultyColors[question.difficulty - 1]}`}>
-            Độ khó {question.difficulty}
-          </span>
-          <span className="text-slate-400 text-sm font-medium uppercase tracking-widest">{question.topic}</span>
-        </div>
+          <div className="bg-slate-50 p-6 border-b border-slate-100 flex justify-between items-center">
+            <div className="flex items-center gap-3">
+              <span className={`px-3 py-1 rounded-full text-xs font-bold border uppercase tracking-wider ${difficultyColors[question.difficulty - 1]}`}>
+                Độ khó {question.difficulty}
+              </span>
+              {onRefresh && !isAnswered && (
+                <button 
+                  onClick={() => { stopAIAudio(); onRefresh(); }}
+                  className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                  title="Đổi câu hỏi khác"
+                >
+                  <RefreshCw size={16} />
+                </button>
+              )}
+            </div>
+            <span className="text-slate-400 text-sm font-medium uppercase tracking-widest">{question.topic}</span>
+          </div>
 
         {/* Content */}
         <div className="p-6 md:p-8">
           
-          {/* Main Question Image */}
-          {(question.imageUrl || isImageGenerating) && (
-            <div 
-              ref={imageContainerRef}
-              className={`mb-6 rounded-xl overflow-hidden shadow-sm border border-slate-100 relative group bg-slate-100 min-h-[200px] flex items-center justify-center transition-all duration-300 ${!imageError && imageLoaded ? 'cursor-zoom-in' : 'cursor-default'}`}
-              onClick={() => !imageError && imageLoaded && question.imageUrl && handleZoom(question.imageUrl)}
-            >
-               {/* Display Loader if Generating or if URL exists but not loaded */}
-               {isImageGenerating ? (
-                  <div className="flex flex-col items-center justify-center p-8 text-indigo-400 gap-3">
-                     <Loader2 size={32} className="animate-spin" />
-                     <span className="text-sm font-bold animate-pulse">AI đang vẽ minh họa...</span>
-                  </div>
-               ) : imageError ? (
-                 <div className="flex flex-col items-center justify-center p-8 text-slate-400 gap-3">
-                    <ImageOff size={32} />
-                    <span className="text-sm font-medium">Không thể tải minh họa</span>
-                 </div>
-               ) : (
-                 <>
-                   {!imageLoaded && (
-                     <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-100 z-10">
-                        <Loader2 className="animate-spin text-indigo-400 mb-2" size={32} />
-                     </div>
-                   )}
-                   {question.imageUrl && (
-                     <img 
-                       ref={imageRef}
-                       src={question.imageUrl} 
-                       alt="Minh họa lịch sử" 
-                       className={`w-full h-auto max-h-[300px] object-cover will-change-transform transition-opacity duration-700 ease-in-out ${imageLoaded ? 'opacity-100' : 'opacity-0'}`}
-                       onLoad={() => setImageLoaded(true)}
-                       onError={() => setImageError(true)}
-                       style={{ transform: 'scale(1.15)' }} 
-                     />
-                   )}
-                 </>
-               )}
-               {!imageError && imageLoaded && question.imageUrl && (
-                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-all duration-300 flex items-center justify-center z-10 pointer-events-none">
-                    <Maximize2 className="text-white opacity-0 group-hover:opacity-100 transform scale-75 group-hover:scale-100 transition-all duration-300" size={40} />
-                 </div>
-               )}
-            </div>
-          )}
-
           <div className="flex items-start justify-between gap-4 mb-6">
             <h2 key={question.text} className="text-xl md:text-2xl font-bold text-slate-800 leading-relaxed animate-[scaleIn_0.5s_ease-out]">
               {question.text}
@@ -522,6 +490,47 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
             >
                 {isAudioLoading && playingType === 'question' ? <Loader2 size={24} className="animate-spin" /> : playingType === 'question' && isPlayingAI ? <Square size={24} fill="currentColor" /> : <Volume2 size={24} />}
             </button>
+          </div>
+
+          {/* Question Image with Loading State */}
+          <div 
+            ref={imageContainerRef}
+            className="mb-8 relative rounded-2xl overflow-hidden bg-slate-100 border border-slate-200 aspect-video shadow-inner group"
+          >
+            {question.imageUrl ? (
+              <img 
+                ref={imageRef}
+                src={question.imageUrl} 
+                alt="Minh họa lịch sử" 
+                className="w-full h-full object-cover transition-transform duration-700 ease-out"
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-slate-400">
+                <div className="relative">
+                  <Sparkles className="w-12 h-12 animate-pulse text-amber-400" />
+                  <Loader2 className="w-12 h-12 animate-spin absolute inset-0 opacity-20" />
+                </div>
+                <div className="text-center">
+                  <p className="text-sm font-bold uppercase tracking-widest animate-pulse">Đang phác họa lịch sử...</p>
+                  <p className="text-[10px] opacity-60">AI đang tạo hình ảnh minh họa cho câu hỏi này</p>
+                </div>
+              </div>
+            )}
+            
+            {/* Overlay Gradient */}
+            <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+            
+            {/* Zoom Button */}
+            {question.imageUrl && (
+              <button 
+                onClick={() => window.open(question.imageUrl, '_blank')}
+                className="absolute bottom-4 right-4 p-2 bg-white/90 backdrop-blur-sm rounded-lg text-slate-700 opacity-0 group-hover:opacity-100 transition-all hover:bg-white shadow-lg translate-y-2 group-hover:translate-y-0"
+                title="Xem ảnh lớn"
+              >
+                <Maximize2 size={20} />
+              </button>
+            )}
           </div>
 
           <div className="space-y-3">
@@ -563,11 +572,18 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
               }
 
               return (
-                <button 
+                <div 
                   key={index} 
-                  onClick={() => handleSelection(index)} 
-                  disabled={isAnswered || isAnyProcessing || isWrong} 
-                  className={btnClass} 
+                  onClick={() => !(isAnswered || isAnyProcessing || isWrong || (hasFailed && !isAnswered)) && handleSelection(index)} 
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      !(isAnswered || isAnyProcessing || isWrong || (hasFailed && !isAnswered)) && handleSelection(index);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={isAnswered || isAnyProcessing || isWrong || (hasFailed && !isAnswered) ? -1 : 0}
+                  aria-disabled={isAnswered || isAnyProcessing || isWrong || (hasFailed && !isAnswered)}
+                  className={`${btnClass} ${isAnswered || isAnyProcessing || isWrong || (hasFailed && !isAnswered) ? 'cursor-default' : 'cursor-pointer'}`} 
                   style={animationStyle}
                 >
                   <div className="flex items-center justify-between">
@@ -581,15 +597,77 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
                       </span>
                       <span className="font-medium">{option}</span>
                     </span>
-                    {isCorrect && <CheckCircle className="w-6 h-6 text-green-500 animate-[scaleIn_0.3s_ease-out]" />}
-                    {(isWrong || (isAnswered && isSelected && !isCorrect)) && <XCircle className="w-6 h-6 text-red-500 animate-[scaleIn_0.3s_ease-out]" />}
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (playingType === `option-${index}` && isPlayingAI) stopAIAudio();
+                          else triggerOptionVoice(index);
+                        }}
+                        disabled={isAudioLoading && playingType !== `option-${index}`}
+                        className={`p-2 rounded-full transition-all ${
+                          playingType === `option-${index}` && isPlayingAI
+                            ? 'bg-indigo-100 text-indigo-600 animate-pulse'
+                            : 'text-slate-300 hover:text-indigo-500 hover:bg-indigo-50'
+                        }`}
+                      >
+                        {isAudioLoading && playingType === `option-${index}` ? (
+                          <Loader2 size={16} className="animate-spin" />
+                        ) : playingType === `option-${index}` && isPlayingAI ? (
+                          <Square size={16} fill="currentColor" />
+                        ) : (
+                          <Volume2 size={16} />
+                        )}
+                      </button>
+                      {isCorrect && <CheckCircle className="w-6 h-6 text-green-500 animate-[scaleIn_0.3s_ease-out]" />}
+                      {(isWrong || (isAnswered && isSelected && !isCorrect)) && <XCircle className="w-6 h-6 text-red-500 animate-[scaleIn_0.3s_ease-out]" />}
+                    </div>
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>
 
-          {!isAnswered && wrongIndices.length > 0 && (
+          {!isAnswered && hasFailed && (
+            <div className="mt-6 animate-[fadeInUp_0.3s_ease-out]">
+              <div className="p-5 bg-rose-50 rounded-2xl border border-rose-200 flex flex-col items-center gap-4 text-center">
+                <div className="flex items-center gap-2 text-rose-700 font-bold">
+                  <XCircle className="text-rose-500" size={24} />
+                  <span>Câu trả lời chưa chính xác!</span>
+                </div>
+                <div className="flex flex-col items-center gap-3">
+                  <div className="flex items-center gap-3 bg-white/50 px-4 py-2 rounded-xl border border-rose-100">
+                    <p className="text-rose-600 text-sm italic font-medium">"{question.hint}"</p>
+                    <button 
+                      onClick={playingType === 'hint' && isPlayingAI ? stopAIAudio : () => triggerAIVoice(false)}
+                      disabled={isAudioLoading && playingType !== 'hint'}
+                      className={`flex-shrink-0 p-2 rounded-full transition-all ${
+                        playingType === 'hint' && isPlayingAI 
+                        ? 'bg-rose-200 text-rose-700 animate-pulse' 
+                        : 'bg-rose-100 text-rose-400 hover:text-rose-600'
+                      }`}
+                      title="Nghe gợi ý"
+                    >
+                      {isAudioLoading && playingType === 'hint' ? <Loader2 size={16} className="animate-spin" /> : playingType === 'hint' && isPlayingAI ? <Square size={16} fill="currentColor" /> : <Volume2 size={16} />}
+                    </button>
+                  </div>
+                  {pointsEarned !== null && pointsEarned === 0 && (
+                    <div className="bg-rose-100 text-rose-700 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider">
+                      +0 điểm
+                    </div>
+                  )}
+                </div>
+                <button 
+                  onClick={handleRetryQuestion}
+                  className="flex items-center gap-2 px-6 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl shadow-lg shadow-rose-200 transition-all active:scale-95"
+                >
+                  <RotateCcw size={18} /> Thử lại ngay (Không mất chuỗi)
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!isAnswered && !hasFailed && wrongIndices.length > 0 && (
             <div className="mt-6 animate-[fadeInUp_0.3s_ease-out]">
               <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 flex items-start gap-3 relative">
                 <Lightbulb className="w-6 h-6 text-amber-500 flex-shrink-0 animate-pulse" />
@@ -599,11 +677,12 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
                 </div>
                 <div className="flex flex-col items-center justify-center ml-2 pl-2 border-l border-amber-200 gap-2">
                    {isAudioLoading && playingType === 'hint' ? <Loader2 className="animate-spin text-amber-500" size={20} /> : isPlayingAI && playingType === 'hint' ? (
-                     <div className="flex flex-col gap-2">
-                       <button onClick={stopAIAudio} className="text-amber-600 animate-pulse"><Square size={20} fill="currentColor" /></button>
-                       <button onClick={handleRewind} className="text-amber-500"><RotateCcw size={18} /></button>
+                     <div className="flex items-center gap-1 bg-amber-100 p-1 rounded-lg border border-amber-200">
+                       <button onClick={stopAIAudio} className="text-amber-600 p-1 hover:bg-amber-200 rounded" title="Dừng đọc"><Square size={16} fill="currentColor" /></button>
+                       <div className="w-px h-4 bg-amber-300"></div>
+                       <button onClick={handleRewind} className="text-amber-600 p-1 hover:bg-amber-200 rounded" title="Tua lại 5 giây"><RotateCcw size={16} /></button>
                      </div>
-                   ) : <button onClick={() => triggerAIVoice(false)} className="text-amber-400"><Volume2 size={24} /></button>}
+                   ) : <button onClick={() => triggerAIVoice(false)} className="text-amber-400 p-2 hover:bg-amber-100 rounded-full transition-colors"><Volume2 size={24} /></button>}
                 </div>
               </div>
             </div>
@@ -614,9 +693,13 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
               
               {/* EXPLANATION BLOCK */}
               <div className="p-6 bg-indigo-50 rounded-2xl border border-indigo-100 animate-[smoothReveal_0.6s_cubic-bezier(0.22,1,0.36,1)_both] relative">
-                <div className="flex flex-col md:flex-row gap-6">
-                  {/* Left Column: Text */}
-                  <div className="flex-1 order-first">
+                {pointsEarned !== null && (
+                  <div className={`absolute -top-3 right-6 px-4 py-1.5 rounded-full font-black text-sm shadow-md animate-[bounce_1s_infinite] ${pointsEarned > 0 ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'}`}>
+                    {pointsEarned > 0 ? `+${pointsEarned} điểm` : '0 điểm'}
+                  </div>
+                )}
+                <div className="flex flex-col gap-4">
+                  <div className="flex-1">
                     <h3 className="font-bold text-indigo-900 mb-2 flex items-center gap-2 text-lg">
                       <HelpCircle size={22} className="text-indigo-500" /> Giải thích:
                     </h3>
@@ -630,10 +713,11 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
                            <span className="text-xs font-bold uppercase">Đang đọc...</span>
                          </div>
                        ) : isPlayingAI && playingType === 'explanation' ? (
-                         <div className="flex items-center gap-3 bg-white/60 p-1.5 px-3 rounded-full border border-indigo-200">
-                           <button onClick={stopAIAudio} className="text-indigo-600"><Square size={18} fill="currentColor" /></button>
-                           <button onClick={handleRewind} className="text-indigo-500"><RotateCcw size={16} /></button>
-                           <input type="range" min="0" max="1" step="0.1" value={aiVolume} onChange={(e) => setAiVolume(parseFloat(e.target.value))} className="w-16 h-1 bg-indigo-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
+                         <div className="flex items-center gap-2 bg-white/60 p-1.5 px-3 rounded-full border border-indigo-200 shadow-sm">
+                           <button onClick={stopAIAudio} className="text-indigo-600 hover:text-indigo-800 transition-colors" title="Dừng đọc"><Square size={18} fill="currentColor" /></button>
+                           <button onClick={handleRewind} className="text-indigo-500 hover:text-indigo-700 transition-colors" title="Tua lại 5 giây"><RotateCcw size={18} /></button>
+                           <div className="w-px h-4 bg-indigo-200 mx-1"></div>
+                           <input type="range" min="0" max="1" step="0.1" value={aiVolume} onChange={(e) => setAiVolume(parseFloat(e.target.value))} className="w-16 h-1 bg-indigo-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" title="Âm lượng giọng đọc" />
                          </div>
                        ) : (
                          <button onClick={() => triggerAIVoice(true)} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded-full text-xs font-bold transition-all shadow-md active:scale-95">
@@ -642,18 +726,6 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
                        )}
                     </div>
                   </div>
-
-                  {/* Right Column: Image (Only if Answered Wrong) */}
-                  {!isCorrectFinal && (explanationImageUrl || isGeneratingExplImg) && (
-                    <div className="order-last">
-                       <AIIllustration 
-                         url={explanationImageUrl} 
-                         isGenerating={isGeneratingExplImg} 
-                         isLoaded={explImgLoaded} 
-                         setIsLoaded={setExplImgLoaded} 
-                       />
-                    </div>
-                  )}
                 </div>
               </div>
 
@@ -662,50 +734,34 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
                 <div className="p-6 bg-emerald-50 rounded-2xl border border-emerald-100 relative overflow-hidden animate-[smoothReveal_0.6s_cubic-bezier(0.22,1,0.36,1)_both]" style={{ animationDelay: '250ms' }}>
                   <div className="absolute -right-8 -top-8 text-emerald-100 opacity-40 rotate-12 scale-150"><Sparkles size={100} /></div>
                   
-                  <div className="flex flex-col md:flex-row gap-6 relative z-10">
-                    {/* Left Column: Text */}
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2">
-                        <Sparkles className="w-6 h-6 text-emerald-600" />
-                        <h3 className="font-bold text-emerald-900 text-lg">Có thể bạn chưa biết:</h3>
-                      </div>
-                      <p className="text-emerald-800 text-sm md:text-base leading-relaxed italic font-medium">"{question.funFact}"</p>
+                  <div className="relative z-10">
+                    <div className="flex items-center gap-3 mb-2">
+                      <Sparkles className="w-6 h-6 text-emerald-600" />
+                      <h3 className="font-bold text-emerald-900 text-lg">Có thể bạn chưa biết:</h3>
                     </div>
-
-                    {/* Right Column: Image (If Answered Correct) */}
-                    {(explanationImageUrl || isGeneratingExplImg) && (
-                      <div className="order-last">
-                         <AIIllustration 
-                           url={explanationImageUrl} 
-                           isGenerating={isGeneratingExplImg} 
-                           isLoaded={explImgLoaded} 
-                           setIsLoaded={setExplImgLoaded} 
-                         />
-                      </div>
-                    )}
+                    <p className="text-emerald-800 text-sm md:text-base leading-relaxed italic font-medium">"{question.funFact}"</p>
                   </div>
                 </div>
               )}
 
               {/* ACTION AREA */}
               <div className="flex flex-col sm:flex-row justify-end gap-3 pt-6 border-t border-slate-100 animate-[smoothReveal_0.6s_cubic-bezier(0.22,1,0.36,1)_both]" style={{ animationDelay: '450ms' }}>
+                {onRefresh && (
+                  <button 
+                    onClick={() => { stopAIAudio(); onRefresh(); }}
+                    className="flex-1 py-4 bg-white border-2 border-slate-200 hover:border-indigo-400 text-slate-700 font-bold rounded-2xl transition-all active:scale-95 flex items-center justify-center gap-2"
+                  >
+                    Thử lại lượt này <RefreshCw size={20} className="text-indigo-500" />
+                  </button>
+                )}
                 <button onClick={handleRetryClick} className="flex items-center justify-center gap-2 px-8 py-4 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-extrabold rounded-2xl shadow-xl transition-all transform active:scale-95 w-full sm:w-auto hover:-translate-y-1">
-                  <RefreshCw size={22} className="animate-spin-slow" /> Tiếp tục hành trình
+                  <RotateCcw size={22} /> Tiếp tục hành trình
                 </button>
               </div>
             </div>
           )}
         </div>
       </div>
-
-      {isZoomed && zoomImageUrl && (
-        <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-[fadeIn_0.2s_ease-out]" onClick={() => setIsZoomed(false)}>
-          <div className="relative w-full max-w-6xl animate-[scaleIn_0.3s_ease-out] flex flex-col items-center">
-             <button onClick={(e) => { e.stopPropagation(); setIsZoomed(false); }} className="absolute -top-12 right-0 text-white rounded-full p-2 bg-white/10 hover:bg-white/20"><X size={24} /></button>
-             <img src={zoomImageUrl} alt="Phóng to" className="w-full h-auto max-h-[85vh] object-contain rounded-lg shadow-2xl" />
-          </div>
-        </div>
-      )}
     </>
   );
 });

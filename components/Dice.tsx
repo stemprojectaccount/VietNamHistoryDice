@@ -1,4 +1,7 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState, Suspense } from 'react';
+import { Canvas, useFrame } from '@react-three/fiber';
+import { useGLTF, Float, PerspectiveCamera, Environment, ContactShadows, PresentationControls, RoundedBox } from '@react-three/drei';
+import * as THREE from 'three';
 
 interface DiceProps {
   value: number;
@@ -7,221 +10,208 @@ interface DiceProps {
   volume: number;
 }
 
-const Dice: React.FC<DiceProps> = React.memo(({ value, isRolling, isMuted, volume }) => {
-  const cubeRef = useRef<HTMLDivElement>(null);
-  
-  // Store accumulated rotation to ensure smooth forward spinning
-  const rotationRef = useRef({ x: 0, y: 0, z: 0 });
-  const prevRollingRef = useRef(false);
-  
-  // State for CSS Styles
-  const [transformStyle, setTransformStyle] = useState('rotateX(-25deg) rotateY(35deg)');
-  const [transitionStyle, setTransitionStyle] = useState('transform 1s');
+// --- 3D DICE MODEL COMPONENT ---
+const Pip = ({ position, rotation }: { position: [number, number, number], rotation?: [number, number, number] }) => (
+  <mesh position={position} rotation={rotation}>
+    <cylinderGeometry args={[0.15, 0.15, 0.1, 32]} />
+    <meshStandardMaterial 
+      color="#330000" 
+      roughness={0.4} 
+      metalness={0.1} 
+    />
+  </mesh>
+);
 
-  // --- AUDIO LOGIC (OPTIMIZED) ---
+const DiceModel = ({ value, isRolling, volume, isMuted }: DiceProps) => {
+  const meshRef = useRef<THREE.Group>(null);
+  
+  // Audio for landing
   const audioContextRef = useRef<AudioContext | null>(null);
-  const noiseBufferRef = useRef<AudioBuffer | null>(null);
-
-  // Initialize Audio Context and Noise Buffer once on mount
+  
   useEffect(() => {
-    const initAudio = () => {
-      try {
-        const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-        if (!AudioContext) return;
-        
-        const ctx = new AudioContext();
-        audioContextRef.current = ctx;
-
-        // Pre-calculate White Noise Buffer (Singleton pattern for buffer)
-        const bufferSize = ctx.sampleRate * 2; // 2 seconds buffer
-        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-        const data = buffer.getChannelData(0);
-        for (let i = 0; i < bufferSize; i++) {
-          data[i] = Math.random() * 2 - 1;
-        }
-        noiseBufferRef.current = buffer;
-      } catch (e) {
-        console.error("Audio init failed", e);
-      }
-    };
-
-    initAudio();
-
-    return () => {
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
-      }
-    };
+    audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    return () => { audioContextRef.current?.close(); };
   }, []);
 
-  const playDiceSound = (type: 'roll' | 'land') => {
-    if (isMuted || volume <= 0 || !audioContextRef.current || !noiseBufferRef.current) return;
+  const playLandSound = () => {
+    if (isMuted || volume <= 0 || !audioContextRef.current) return;
+    const ctx = audioContextRef.current;
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(150, t);
+    osc.frequency.exponentialRampToValueAtTime(40, t + 0.1);
+    gain.gain.setValueAtTime(0.3 * volume, t);
+    gain.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.1);
+  };
 
-    try {
-      const ctx = audioContextRef.current;
-      
-      // Resume context if suspended (browser policy)
-      if (ctx.state === 'suspended') {
-        ctx.resume();
-      }
-
-      const t = ctx.currentTime;
-      const buffer = noiseBufferRef.current;
-
-      // Helper to play a noise burst
-      const playNoiseBurst = (startTime: number, duration: number, filterFreq: number, gainVal: number) => {
-        const noise = ctx.createBufferSource();
-        noise.buffer = buffer;
-        
-        const filter = ctx.createBiquadFilter();
-        filter.type = 'highpass';
-        filter.frequency.value = filterFreq;
-
-        const gain = ctx.createGain();
-        gain.gain.setValueAtTime(0, startTime);
-        gain.gain.linearRampToValueAtTime(gainVal, startTime + 0.005);
-        gain.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
-
-        noise.connect(filter);
-        filter.connect(gain);
-        gain.connect(ctx.destination);
-
-        noise.start(startTime);
-        noise.stop(startTime + duration + 0.1);
-      };
-
-      if (type === 'land') {
-        playNoiseBurst(t, 0.08, 1200, 0.8 * volume);
-
-        const oscLow = ctx.createOscillator();
-        const gainLow = ctx.createGain();
-        oscLow.type = 'triangle';
-        oscLow.frequency.setValueAtTime(120, t);
-        oscLow.frequency.exponentialRampToValueAtTime(40, t + 0.15);
-        
-        gainLow.gain.setValueAtTime(0.6 * volume, t);
-        gainLow.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
-        
-        oscLow.connect(gainLow);
-        gainLow.connect(ctx.destination);
-        oscLow.start(t);
-        oscLow.stop(t + 0.2);
-
-      } else if (type === 'roll') {
-        const count = 6; 
-        for (let i = 0; i < count; i++) {
-          const startTime = t + (Math.random() * 0.6);
-          const freq = 800 + Math.random() * 1000;
-          const vol = (0.1 + Math.random() * 0.2) * volume;
-          const dur = 0.03 + Math.random() * 0.02;
-          playNoiseBurst(startTime, dur, freq, vol);
-        }
-      }
-    } catch (e) {
-      console.error("Audio playback error:", e);
+  // Map dice value to rotations
+  const getRotationForValue = (val: number) => {
+    switch (val) {
+      case 1: return new THREE.Euler(0, 0, 0);
+      case 2: return new THREE.Euler(0, Math.PI / 2, 0);
+      case 3: return new THREE.Euler(0, Math.PI, 0);
+      case 4: return new THREE.Euler(0, -Math.PI / 2, 0);
+      case 5: return new THREE.Euler(-Math.PI / 2, 0, 0);
+      case 6: return new THREE.Euler(Math.PI / 2, 0, 0);
+      default: return new THREE.Euler(0, 0, 0);
     }
   };
 
-  const getTargetRotation = (val: number) => {
-    switch(val) {
-      case 1: return { x: 0, y: 0 };
-      case 2: return { x: 0, y: -90 };
-      case 3: return { x: 0, y: -180 };
-      case 4: return { x: 0, y: 90 };
-      case 5: return { x: -90, y: 0 };
-      case 6: return { x: 90, y: 0 };
-      default: return { x: 0, y: 0 };
-    }
-  };
+  const lastRolling = useRef(isRolling);
+  const landingTime = useRef(0);
+  const rollStartTime = useRef(0);
 
-  useEffect(() => {
-    if (isRolling && !prevRollingRef.current) {
-      playDiceSound('roll');
-    } else if (!isRolling && prevRollingRef.current) {
-      playDiceSound('land');
-    }
-    prevRollingRef.current = isRolling;
+  useFrame((state, delta) => {
+    if (!meshRef.current) return;
+
+    const time = state.clock.elapsedTime;
 
     if (isRolling) {
-      const spins = 4 + Math.random() * 2;
-      const randomSpinX = (Math.random() * 360 * spins) + 1080;
-      const randomSpinY = (Math.random() * 360 * spins) + 1080;
-      const randomSpinZ = (Math.random() * 90) - 45;
-
-      rotationRef.current = {
-        x: rotationRef.current.x + randomSpinX,
-        y: rotationRef.current.y + randomSpinY,
-        z: rotationRef.current.z + randomSpinZ
-      };
-
-      setTransitionStyle('transform 1.2s cubic-bezier(0.1, 0.7, 0.1, 1)');
-      setTransformStyle(`translateY(-220px) scale(1.5) rotateX(${rotationRef.current.x}deg) rotateY(${rotationRef.current.y}deg) rotateZ(${rotationRef.current.z}deg)`);
-
-    } else {
-      const base = getTargetRotation(value);
+      if (!lastRolling.current) {
+        rollStartTime.current = time;
+      }
+      // Fast random rotation while rolling
+      meshRef.current.rotation.x += delta * 15;
+      meshRef.current.rotation.y += delta * 18;
+      meshRef.current.rotation.z += delta * 12;
       
-      const snapToGrid = (current: number, targetBase: number) => {
-        const currentRotations = Math.floor(current / 360);
-        return (currentRotations * 360) + targetBase + 1080;
-      };
-
-      const finalX = snapToGrid(rotationRef.current.x, base.x);
-      const finalY = snapToGrid(rotationRef.current.y, base.y);
-      const finalZ = 0; 
-
-      rotationRef.current = { x: finalX, y: finalY, z: finalZ };
-
-      const microTilt = (Math.random() - 0.5) * 6;
-
-      setTransitionStyle('transform 0.5s cubic-bezier(0.34, 1.3, 0.64, 1)');
-      setTransformStyle(`translateY(0px) scale(1) rotateX(${finalX + microTilt}deg) rotateY(${finalY + microTilt}deg) rotateZ(${finalZ}deg)`);
+      // Dynamic jumping bounce
+      const bounceSpeed = 10;
+      const bounceHeight = 1.2;
+      meshRef.current.position.y = Math.abs(Math.sin(time * bounceSpeed)) * bounceHeight;
+      
+      // Slight scale pulse while in air
+      const scale = 1 + Math.abs(Math.sin(time * bounceSpeed)) * 0.1;
+      meshRef.current.scale.set(scale, scale, scale);
+      
+      lastRolling.current = true;
+    } else {
+      if (lastRolling.current) {
+        landingTime.current = time;
+        playLandSound();
+      }
+      
+      const target = getRotationForValue(value);
+      const timeSinceLanding = time - landingTime.current;
+      
+      // Smoothly interpolate to target rotation
+      meshRef.current.rotation.x = THREE.MathUtils.lerp(meshRef.current.rotation.x, target.x, 0.15);
+      meshRef.current.rotation.y = THREE.MathUtils.lerp(meshRef.current.rotation.y, target.y, 0.15);
+      meshRef.current.rotation.z = THREE.MathUtils.lerp(meshRef.current.rotation.z, target.z, 0.15);
+      
+      // Landing impact: subtle bounce and settle
+      if (timeSinceLanding < 0.5) {
+        const impact = Math.exp(-timeSinceLanding * 10) * Math.cos(timeSinceLanding * 20) * 0.2;
+        meshRef.current.position.y = impact;
+        const settleScale = 1 - impact * 0.5;
+        meshRef.current.scale.set(settleScale, settleScale, settleScale);
+      } else {
+        meshRef.current.position.y = THREE.MathUtils.lerp(meshRef.current.position.y, 0, 0.1);
+        meshRef.current.scale.set(
+          THREE.MathUtils.lerp(meshRef.current.scale.x, 1, 0.1),
+          THREE.MathUtils.lerp(meshRef.current.scale.y, 1, 0.1),
+          THREE.MathUtils.lerp(meshRef.current.scale.z, 1, 0.1)
+        );
+      }
+      
+      lastRolling.current = false;
     }
-  }, [value, isRolling]);
+  });
 
-  // Memoize face rendering logic
-  const renderFace = useMemo(() => (faceNumber: number) => {
-    const configs: {[key: number]: number[]} = {
-      1: [4],
-      2: [2, 6], 
-      3: [2, 4, 6],
-      4: [0, 2, 6, 8],
-      5: [0, 2, 4, 6, 8],
-      6: [0, 2, 3, 5, 6, 8]
-    };
-    const visibleDots = configs[faceNumber] || [];
-    return Array.from({ length: 9 }).map((_, i) => (
-      <div key={i} className="dot">
-        {visibleDots.includes(i) && <div className="dot-pip"></div>}
-      </div>
-    ));
-  }, []);
+  // Remove the old useEffect for sound since it's handled in useFrame now
 
   return (
-    <div className="my-10 scene mx-auto z-10">
-      <div 
-        ref={cubeRef}
-        className="cube" 
-        style={{ 
-          transform: transformStyle,
-          transition: transitionStyle
-        }}
+    <group ref={meshRef}>
+      {/* THE DICE BODY - ROUNDED OPAQUE IVORY STYLE */}
+      <RoundedBox 
+        args={[2, 2, 2]} 
+        radius={0.2} 
+        smoothness={4} 
+        castShadow 
+        receiveShadow
       >
-        <div className="cube__face cube__face--1">{renderFace(1)}</div>
-        <div className="cube__face cube__face--2">{renderFace(2)}</div>
-        <div className="cube__face cube__face--3">{renderFace(3)}</div>
-        <div className="cube__face cube__face--4">{renderFace(4)}</div>
-        <div className="cube__face cube__face--5">{renderFace(5)}</div>
-        <div className="cube__face cube__face--6">{renderFace(6)}</div>
-      </div>
-      
-      <div 
-        className="dice-shadow" 
-        style={{
-          opacity: isRolling ? 0.2 : 0.5,
-          transform: isRolling ? 'rotateX(90deg) scale(0.5)' : 'rotateX(90deg) scale(1)',
-          transition: isRolling ? 'all 1.2s ease-out' : 'all 0.5s cubic-bezier(0.34, 1.3, 0.64, 1)'
-        }}
-      ></div>
+        <meshPhysicalMaterial 
+          color="#fdfcf0"
+          roughness={0.1}
+          metalness={0.05}
+          reflectivity={0.5}
+          clearcoat={1}
+          clearcoatRoughness={0.1}
+          sheen={0.5}
+          sheenRoughness={0.2}
+          sheenColor="#ffffff"
+        />
+      </RoundedBox>
+
+      {/* PIPS (Dots) - Recessed into the faces (at 0.96 for cleaner look) */}
+      {/* Face 1 (Front) */}
+      <Pip position={[0, 0, 0.96]} rotation={[Math.PI / 2, 0, 0]} />
+
+      {/* Face 2 (Right) */}
+      <group position={[0.96, 0, 0]} rotation={[0, Math.PI / 2, 0]}>
+        <Pip position={[-0.45, 0.45, 0]} rotation={[Math.PI / 2, 0, 0]} />
+        <Pip position={[0.45, -0.45, 0]} rotation={[Math.PI / 2, 0, 0]} />
+      </group>
+
+      {/* Face 3 (Back) */}
+      <group position={[0, 0, -0.96]} rotation={[0, Math.PI, 0]}>
+        <Pip position={[-0.45, 0.45, 0]} rotation={[Math.PI / 2, 0, 0]} />
+        <Pip position={[0, 0, 0]} rotation={[Math.PI / 2, 0, 0]} />
+        <Pip position={[0.45, -0.45, 0]} rotation={[Math.PI / 2, 0, 0]} />
+      </group>
+
+      {/* Face 4 (Left) */}
+      <group position={[-0.96, 0, 0]} rotation={[0, -Math.PI / 2, 0]}>
+        <Pip position={[-0.45, 0.45, 0]} rotation={[Math.PI / 2, 0, 0]} />
+        <Pip position={[0.45, 0.45, 0]} rotation={[Math.PI / 2, 0, 0]} />
+        <Pip position={[-0.45, -0.45, 0]} rotation={[Math.PI / 2, 0, 0]} />
+        <Pip position={[0.45, -0.45, 0]} rotation={[Math.PI / 2, 0, 0]} />
+      </group>
+
+      {/* Face 5 (Top) */}
+      <group position={[0, 0.96, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <Pip position={[-0.45, 0.45, 0]} rotation={[Math.PI / 2, 0, 0]} />
+        <Pip position={[0.45, 0.45, 0]} rotation={[Math.PI / 2, 0, 0]} />
+        <Pip position={[0, 0, 0]} rotation={[Math.PI / 2, 0, 0]} />
+        <Pip position={[-0.45, -0.45, 0]} rotation={[Math.PI / 2, 0, 0]} />
+        <Pip position={[0.45, -0.45, 0]} rotation={[Math.PI / 2, 0, 0]} />
+      </group>
+
+      {/* Face 6 (Bottom) */}
+      <group position={[0, -0.96, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <Pip position={[-0.45, 0.45, 0]} rotation={[Math.PI / 2, 0, 0]} />
+        <Pip position={[0.45, 0.45, 0]} rotation={[Math.PI / 2, 0, 0]} />
+        <Pip position={[-0.45, 0, 0]} rotation={[Math.PI / 2, 0, 0]} />
+        <Pip position={[0.45, 0, 0]} rotation={[Math.PI / 2, 0, 0]} />
+        <Pip position={[-0.45, -0.45, 0]} rotation={[Math.PI / 2, 0, 0]} />
+        <Pip position={[0.45, -0.45, 0]} rotation={[Math.PI / 2, 0, 0]} />
+      </group>
+    </group>
+  );
+};
+
+const Dice: React.FC<DiceProps> = React.memo(({ value, isRolling, isMuted, volume }) => {
+  return (
+    <div className="w-full h-[300px] md:h-[400px]">
+      <Canvas shadows dpr={[1, 2]}>
+        <PerspectiveCamera makeDefault position={[0, 0, 6]} fov={50} />
+        <ambientLight intensity={0.5} />
+        <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} intensity={1} castShadow />
+        <pointLight position={[-10, -10, -10]} intensity={0.5} />
+        
+        <Float speed={2} rotationIntensity={0.5} floatIntensity={0.5}>
+          <DiceModel value={value} isRolling={isRolling} volume={volume} isMuted={isMuted} />
+        </Float>
+
+        <ContactShadows position={[0, -2.5, 0]} opacity={0.4} scale={10} blur={2} far={4.5} />
+        <Environment preset="city" />
+      </Canvas>
     </div>
   );
 });

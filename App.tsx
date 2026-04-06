@@ -1,9 +1,11 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { GameState, Question, HistoryItem } from './types';
-import { generateQuestion, generateQuestionImage } from './services/geminiService';
+import confetti from 'canvas-confetti';
+import { GameState, Question, HistoryItem, Difficulty } from './types';
+import { generateQuestion, generateImage } from './services/geminiService';
 import Dice from './components/Dice';
 import QuestionCard from './components/QuestionCard';
 import HistoryModal from './components/HistoryModal';
+import SummaryModal from './components/SummaryModal';
 import { 
   Dices, Trophy, Flame, ScrollText, AlertCircle, RefreshCw, 
   User, GraduationCap, History as HistoryIcon, Play, 
@@ -24,6 +26,13 @@ const SUGGESTED_TOPICS = [
   "Lịch sử Trung Quốc - Nhà Thanh",
   "Lịch sử Châu Âu thời Trung Cổ"
 ];
+
+const DIFFICULTY_SETTINGS = {
+  [Difficulty.EASY]: { label: "Dễ", questions: 5, multiplier: 1, color: "text-green-600", bg: "bg-green-50", border: "border-green-200" },
+  [Difficulty.MEDIUM]: { label: "Trung bình", questions: 10, multiplier: 1.5, color: "text-amber-600", bg: "bg-amber-50", border: "border-amber-200" },
+  [Difficulty.HARD]: { label: "Khó", questions: 15, multiplier: 2, color: "text-red-600", bg: "bg-red-50", border: "border-red-200" },
+  [Difficulty.INFINITY]: { label: "Vô tận", questions: Infinity, multiplier: 2.5, color: "text-purple-600", bg: "bg-purple-50", border: "border-purple-200" }
+};
 
 // Define Background Options
 const BACKGROUNDS = [
@@ -47,6 +56,7 @@ const App: React.FC = () => {
   const [studentName, setStudentName] = useState<string>("");
   const [grade, setGrade] = useState<string>("Lớp 6"); 
   const [topic, setTopic] = useState<string>("");
+  const [difficultyLevel, setDifficultyLevel] = useState<Difficulty>(Difficulty.EASY);
   
   // Validation Errors
   const [apiKeyError, setApiKeyError] = useState<string>("");
@@ -61,8 +71,17 @@ const App: React.FC = () => {
   const [streak, setStreak] = useState<number>(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isRolling, setIsRolling] = useState(false);
-  const [isImageGenerating, setIsImageGenerating] = useState(false);
   
+  // Session Stats
+  const [sessionStats, setSessionStats] = useState({
+    totalQuestions: 0,
+    correctAnswers: 0,
+    sessionScore: 0,
+    longestStreak: 0
+  });
+  const [showSummary, setShowSummary] = useState(false);
+  const [pointsEarned, setPointsEarned] = useState<number | null>(null);
+
   // Audio State
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [volume, setVolume] = useState<number>(1.0); // 0.0 to 1.0
@@ -86,6 +105,7 @@ const App: React.FC = () => {
       const savedName = localStorage.getItem('suca_name');
       const savedGrade = localStorage.getItem('suca_grade');
       const savedTopic = localStorage.getItem('suca_topic');
+      const savedDifficulty = localStorage.getItem('suca_difficulty');
       const savedMute = localStorage.getItem('suca_muted');
       const savedVolume = localStorage.getItem('suca_volume');
       const savedBg = localStorage.getItem('suca_bgId'); // Load Background
@@ -117,6 +137,10 @@ const App: React.FC = () => {
       if (savedTopic) {
         setTopic(savedTopic);
         loadedTopic = savedTopic;
+      }
+
+      if (savedDifficulty && Object.values(Difficulty).includes(savedDifficulty as Difficulty)) {
+        setDifficultyLevel(savedDifficulty as Difficulty);
       }
 
       if (savedGrade) {
@@ -177,6 +201,7 @@ const App: React.FC = () => {
     localStorage.setItem('suca_name', studentName);
     localStorage.setItem('suca_grade', grade);
     localStorage.setItem('suca_topic', topic);
+    localStorage.setItem('suca_difficulty', difficultyLevel);
     localStorage.setItem('suca_muted', isMuted.toString());
     localStorage.setItem('suca_volume', volume.toString());
     localStorage.setItem('suca_bgId', bgId); // Save Background
@@ -206,7 +231,6 @@ const App: React.FC = () => {
   // Memoized to prevent recreation on every render
   const fetchQuestion = useCallback(async (difficulty: number) => {
     setGameState(GameState.FETCHING);
-    setIsImageGenerating(true); 
 
     try {
       const searchTopic = topic.trim() || "Lịch sử chung";
@@ -216,24 +240,17 @@ const App: React.FC = () => {
       setCurrentQuestion(question);
       setGameState(GameState.ANSWERING);
 
-      generateQuestionImage(apiKey, question.text, searchTopic)
-        .then((imageUrl) => {
-           if (imageUrl) {
-             setCurrentQuestion(prev => {
-               if (!prev || prev.text !== question.text) return prev; 
-               return { ...prev, imageUrl };
-             });
-           }
-        })
-        .finally(() => {
-           setIsImageGenerating(false);
-        });
+      // Fetch image in background to enhance visual learning
+      generateImage(apiKey, question.text).then(url => {
+        if (url) {
+          setCurrentQuestion(prev => prev && prev.text === question.text ? { ...prev, imageUrl: url } : prev);
+        }
+      });
 
     } catch (err: any) {
       console.error(err);
       setErrorMsg(err.message || "Lỗi kết nối. Vui lòng thử lại.");
       setGameState(GameState.ERROR);
-      setIsImageGenerating(false);
     }
   }, [apiKey, topic, grade]);
 
@@ -241,11 +258,17 @@ const App: React.FC = () => {
   const handleRoll = useCallback(() => {
     if (gameState === GameState.ROLLING) return;
     
+    // Check if session limit reached (skip for INFINITY)
+    if (difficultyLevel !== Difficulty.INFINITY && sessionStats.totalQuestions >= DIFFICULTY_SETTINGS[difficultyLevel].questions) {
+      setShowSummary(true);
+      return;
+    }
+
     setGameState(GameState.ROLLING);
     setIsRolling(true);
     setSelectedAnswerIndex(null);
+    setPointsEarned(null);
     setErrorMsg(null);
-    setIsImageGenerating(false);
 
     setTimeout(() => {
       const roll = Math.floor(Math.random() * 6) + 1;
@@ -254,6 +277,15 @@ const App: React.FC = () => {
       fetchQuestion(roll);
     }, 1500);
   }, [gameState, fetchQuestion]); // Added fetchQuestion to dependencies
+
+  const handleRefreshQuestion = useCallback(() => {
+    if (currentRoll > 0) {
+      setSelectedAnswerIndex(null);
+      setPointsEarned(null);
+      setErrorMsg(null);
+      fetchQuestion(currentRoll);
+    }
+  }, [currentRoll, fetchQuestion]);
 
   // Handle Answer Selection
   const handleAnswer = useCallback((index: number, isRetry: boolean) => {
@@ -270,25 +302,87 @@ const App: React.FC = () => {
     setHistory(prev => [newHistoryItem, ...prev]);
 
     if (index === currentQuestion.correctAnswerIndex) {
+      // Trigger Confetti
+      confetti({
+        particleCount: 100,
+        spread: 70,
+        origin: { y: 0.6 },
+        colors: ['#f59e0b', '#fbbf24', '#d97706', '#ffffff']
+      });
+
+      let earned = 0;
+      const multiplier = DIFFICULTY_SETTINGS[difficultyLevel].multiplier;
+      
       if (isRetry) {
-        setScore(s => s + (currentQuestion.difficulty * 5));
-        setStreak(0); 
+        earned = Math.round(currentQuestion.difficulty * 5 * multiplier);
+        setScore(s => s + earned);
+        // Streak remains same (no penalty, but no increase)
       } else {
-        setScore(s => s + (currentQuestion.difficulty * 10));
-        setStreak(s => s + 1);
+        earned = Math.round(currentQuestion.difficulty * 10 * multiplier);
+        setScore(s => s + earned);
+        setStreak(s => {
+          const newStreak = s + 1;
+          setSessionStats(prev => ({
+            ...prev,
+            longestStreak: Math.max(prev.longestStreak, newStreak)
+          }));
+          return newStreak;
+        });
       }
+      setPointsEarned(earned);
+      setSessionStats(prev => {
+        const newCorrect = prev.correctAnswers + 1;
+        const newTotal = prev.totalQuestions + 1;
+        const newScore = prev.sessionScore + earned;
+        
+        // Check if session should end (skip for INFINITY)
+        if (difficultyLevel !== Difficulty.INFINITY && newTotal >= DIFFICULTY_SETTINGS[difficultyLevel].questions) {
+          setTimeout(() => setShowSummary(true), 1500);
+        }
+        
+        return {
+          ...prev,
+          correctAnswers: newCorrect,
+          sessionScore: newScore,
+          totalQuestions: newTotal
+        };
+      });
     } else {
       setStreak(0);
+      setPointsEarned(0);
+      setSessionStats(prev => {
+        const newTotal = prev.totalQuestions + 1;
+        
+        // Check if session should end (skip for INFINITY)
+        if (difficultyLevel !== Difficulty.INFINITY && newTotal >= DIFFICULTY_SETTINGS[difficultyLevel].questions) {
+          setTimeout(() => setShowSummary(true), 1500);
+        }
+        
+        return {
+          ...prev,
+          totalQuestions: newTotal
+        };
+      });
     }
-  }, [gameState, currentQuestion]); // Optimized dependencies
+  }, [gameState, currentQuestion, difficultyLevel]); // Optimized dependencies
 
   const resetGame = () => {
     setGameState(GameState.SETUP);
     setScore(0);
     setStreak(0);
+    setSessionStats({
+      totalQuestions: 0,
+      correctAnswers: 0,
+      sessionScore: 0,
+      longestStreak: 0
+    });
     setCurrentQuestion(null);
     setSelectedAnswerIndex(null);
-    setIsImageGenerating(false);
+    setPointsEarned(null);
+  };
+
+  const endSession = () => {
+    setShowSummary(true);
   };
 
   const clearHistory = () => {
@@ -361,6 +455,32 @@ const App: React.FC = () => {
         onClearHistory={clearHistory}
         isMuted={isMuted}
         volume={volume}
+      />
+
+      <SummaryModal 
+        isOpen={showSummary}
+        onClose={() => setShowSummary(false)}
+        stats={{
+          ...sessionStats,
+          difficulty: DIFFICULTY_SETTINGS[difficultyLevel].label
+        }}
+        studentName={studentName}
+        onRestart={() => {
+          setSessionStats({
+            totalQuestions: 0,
+            correctAnswers: 0,
+            sessionScore: 0,
+            longestStreak: 0
+          });
+          setShowSummary(false);
+          // We need to wait for state update or use a functional update
+          // But handleRoll will now check the reset stats
+          setTimeout(() => handleRoll(), 0);
+        }}
+        onHome={() => {
+          setShowSummary(false);
+          resetGame();
+        }}
       />
 
       {/* THEME SELECTION MODAL */}
@@ -561,6 +681,41 @@ const App: React.FC = () => {
                   </select>
                 </div>
 
+                {/* Difficulty Selection */}
+                <div>
+                  <label className="flex items-center gap-2 text-sm font-bold text-slate-700 mb-2">
+                    <Zap size={18} className="text-amber-600" />
+                    Độ khó hành trình
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {(Object.keys(DIFFICULTY_SETTINGS) as Difficulty[]).map((level) => {
+                      const settings = DIFFICULTY_SETTINGS[level as Difficulty];
+                      const isSelected = difficultyLevel === level;
+                      return (
+                        <button
+                          key={level}
+                          onClick={() => setDifficultyLevel(level as Difficulty)}
+                          className={`flex flex-col items-center p-3 rounded-xl border-2 transition-all ${
+                            isSelected 
+                            ? `${settings.border} ${settings.bg} ring-1 ring-offset-1 ring-amber-200 scale-[1.02]` 
+                            : 'border-slate-100 bg-white hover:border-slate-200'
+                          }`}
+                        >
+                          <span className={`text-[10px] sm:text-xs font-bold uppercase tracking-wider mb-1 ${settings.color}`}>
+                            {settings.label}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-medium">
+                            {level === Difficulty.INFINITY ? "∞" : `${settings.questions} câu`}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-medium">
+                            x{settings.multiplier} điểm
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 {/* Topic Input */}
                 <div>
                   <label className="flex items-center gap-2 text-sm font-bold text-slate-700 mb-2">
@@ -630,8 +785,26 @@ const App: React.FC = () => {
           <div className="w-full flex flex-col items-center">
             
             {/* Header Info Mobile */}
-            <div className="md:hidden w-full text-center mb-4 text-sm text-slate-500">
-               Đang học: <span className="font-bold text-slate-800">{topic || "Lịch sử chung"}</span>
+            <div className="w-full flex flex-col items-center mb-6">
+              <div className="flex items-center justify-between w-full max-w-4xl px-4 mb-2">
+                <div className="flex items-center gap-2 text-sm font-bold text-slate-500">
+                  <ScrollText size={16} className="text-amber-600" />
+                  <span>{topic || "Lịch sử chung"}</span>
+                </div>
+                <div className="flex items-center gap-2 text-sm font-bold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full border border-indigo-100">
+                  <span>Câu {sessionStats.totalQuestions + (gameState === GameState.ANSWERING || gameState === GameState.RESULT ? 0 : 1)} {difficultyLevel !== Difficulty.INFINITY && `/ ${DIFFICULTY_SETTINGS[difficultyLevel].questions}`}</span>
+                </div>
+              </div>
+              
+              {/* Progress Bar */}
+              <div className="w-full max-w-4xl px-4">
+                <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden shadow-inner">
+                  <div 
+                    className="h-full bg-gradient-to-r from-amber-400 to-orange-500 transition-all duration-500 ease-out"
+                    style={{ width: difficultyLevel === Difficulty.INFINITY ? '100%' : `${(sessionStats.totalQuestions / DIFFICULTY_SETTINGS[difficultyLevel].questions) * 100}%` }}
+                  ></div>
+                </div>
+              </div>
             </div>
 
             {/* Dice Section */}
@@ -646,6 +819,7 @@ const App: React.FC = () => {
               {/* Controls */}
               {(gameState === GameState.IDLE || gameState === GameState.RESULT || gameState === GameState.ERROR) && (
                 <div className="flex flex-col gap-3 mt-8 items-center animate-[fadeInUp_0.3s_ease-out]">
+                   
                    <button
                     onClick={handleRoll}
                     className="px-10 py-4 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-full shadow-lg shadow-orange-200 hover:shadow-orange-300 transition-all hover:scale-105 active:scale-95 flex items-center gap-3 text-lg group"
@@ -662,6 +836,17 @@ const App: React.FC = () => {
                       </>
                     )}
                   </button>
+                  
+                  {(gameState === GameState.RESULT || gameState === GameState.IDLE) && sessionStats.totalQuestions > 0 && (
+                    <button 
+                      onClick={endSession}
+                      className="px-8 py-3 bg-white border-2 border-slate-200 text-slate-600 font-bold rounded-full hover:bg-slate-50 transition-all flex items-center gap-2 shadow-sm active:scale-95"
+                    >
+                      <Trophy size={18} className="text-amber-500" />
+                      Kết thúc phiên học
+                    </button>
+                  )}
+
                   {gameState === GameState.RESULT && (
                      <button 
                        onClick={resetGame}
@@ -705,11 +890,12 @@ const App: React.FC = () => {
                 selectedAnswerIndex={selectedAnswerIndex}
                 onSelectAnswer={handleAnswer}
                 isAnswered={gameState === GameState.RESULT}
-                onRetry={() => fetchQuestion(currentRoll)}
+                onRetry={() => setGameState(GameState.IDLE)}
+                onRefresh={handleRefreshQuestion}
                 isMuted={isMuted}
                 volume={volume}
                 apiKey={apiKey}
-                isImageGenerating={isImageGenerating}
+                pointsEarned={pointsEarned}
               />
             )}
             

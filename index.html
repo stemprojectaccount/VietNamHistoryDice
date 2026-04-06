@@ -79,125 +79,15 @@
         100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
       }
       
-      /* --- SUPER REALISTIC DICE --- */
+      /* --- 3D CANVAS CONTAINER --- */
       .scene {
-        perspective: 800px; /* Perspective closer for more 3D impact */
         position: relative;
         display: flex;
         justify-content: center;
         align-items: center;
-        height: 160px; /* Slightly larger stage */
-        width: 160px;
-        filter: drop-shadow(0 20px 30px rgba(0,0,0,0.15)); /* Global ambient shadow */
-      }
-      
-      .cube {
+        height: 300px;
         width: 100%;
-        height: 100%;
-        position: relative;
-        transform-style: preserve-3d;
-        will-change: transform; /* Hint to browser for GPU optimization */
-      }
-      
-      .cube__face {
-        position: absolute;
-        width: 100%;
-        height: 100%;
-        border-radius: 24px; /* Slightly tighter corners for cartoon look */
-        
-        /* GOLDEN DICE STYLE - Matches User Request */
-        /* Vibrant Amber/Gold Gradient */
-        background: linear-gradient(135deg, #fcd34d 0%, #f59e0b 50%, #d97706 100%);
-        border: 1px solid #b45309; /* Dark amber border */
-        
-        /* FAKE THICKNESS & BEVEL EFFECT using Box Shadow */
-        box-shadow: 
-          inset 0 0 0 2px rgba(255,255,255,0.4), /* Soft Highlight rim */
-          inset 4px 4px 12px rgba(251, 191, 36, 0.5),   /* Inner glow */
-          inset -4px -4px 12px rgba(120, 53, 15, 0.2); /* Inner shadow */
-          
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        grid-template-rows: repeat(3, 1fr);
-        padding: 16px; /* Spacing for pips */
-        backface-visibility: hidden; /* Hide backface to prevent flickering */
-        /* Smooth rendering */
-        -webkit-font-smoothing: antialiased;
-      }
-      
-      /* Face Transforms (160px size -> 80px translate) */
-      .cube__face--1 { transform: rotateY(  0deg) translateZ(80px); }
-      .cube__face--2 { transform: rotateY( 90deg) translateZ(80px); }
-      .cube__face--3 { transform: rotateY(180deg) translateZ(80px); }
-      .cube__face--4 { transform: rotateY(-90deg) translateZ(80px); }
-      .cube__face--5 { transform: rotateX( 90deg) translateZ(80px); }
-      .cube__face--6 { transform: rotateX(-90deg) translateZ(80px); }
-
-      /* The Pip Container */
-      .dot {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 100%;
-        height: 100%;
-      }
-      
-      /* The Pip (Hole + Paint) - 3D REALISTIC STYLE */
-      .dot-pip {
-        width: 28px;
-        height: 28px;
-        border-radius: 50%;
-        
-        /* Deep Dark Brown Base */
-        background-color: #3f1205;
-        
-        /* Gradient to simulate concave depth (darker at top-left/center, lighter at bottom-right) */
-        background-image: radial-gradient(120% 120% at 75% 75%, rgba(255,255,255,0.05) 0%, rgba(0,0,0,0.9) 90%);
-        
-        /* Complex Layered Shadows for 3D indentation */
-        box-shadow: 
-          /* 1. Deep Inner Shadow (Light from Top-Left) */
-          inset 3px 3px 8px rgba(0,0,0,0.95),
-          /* 2. Sharp inner rim definition */
-          inset 1px 1px 2px rgba(0,0,0,0.8),
-          /* 3. Inner Bounce Light (Bottom-Right reflection inside hole) */
-          inset -2px -2px 5px rgba(255,255,255,0.15),
-          /* 4. Outer Rim Highlight (The edge of the hole catching light) */
-          0.5px 0.5px 1px rgba(255,255,255,0.5),
-          /* 5. Outer Rim Shadow */
-          -0.5px -0.5px 1px rgba(60, 20, 0, 0.3);
-          
-        position: relative;
-        will-change: transform;
-      }
-
-      /* Specular Highlight (Glossy reflection of light source) */
-      .dot-pip::after {
-        content: '';
-        display: block;
-        position: absolute;
-        top: 12%;
-        left: 12%;
-        width: 30%;
-        height: 25%;
-        border-radius: 50%;
-        background: radial-gradient(ellipse at center, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0) 70%);
-        filter: blur(1px);
-        transform: rotate(-45deg);
-        pointer-events: none;
-      }
-      
-      /* Dynamic Shadow on the floor */
-      .dice-shadow {
-        position: absolute;
-        width: 140px;
-        height: 24px;
-        background: radial-gradient(50% 50% at 50% 50%, rgba(180, 83, 9, 0.4) 0%, rgba(0,0,0,0) 100%); /* Amber shadow */
-        bottom: -60px;
-        transform: rotateX(90deg) translateZ(0);
-        z-index: -1;
-        filter: blur(8px);
-        transition: all 0.3s ease-out;
+        max-width: 400px;
       }
     </style>
   <script type="importmap">
@@ -211,9 +101,10 @@
   }
 }
 </script>
+<link rel="stylesheet" href="/index.css">
 </head>
   <body class="bg-amber-50 text-slate-900">
     <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
-  </body>
+  <script type="module" src="/index.tsx"></script>
+</body>
 </html>

@@ -26,6 +26,13 @@ export enum GameState {
   ERROR = 'ERROR'
 }
 
+export enum Difficulty {
+  EASY = 'EASY',
+  MEDIUM = 'MEDIUM',
+  HARD = 'HARD',
+  INFINITY = 'INFINITY'
+}
+
 export interface AppState {
   topic: string;
   score: number;
