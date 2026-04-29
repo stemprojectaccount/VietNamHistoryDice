@@ -74,7 +74,7 @@ const HistoryModal: React.FC<HistoryModalProps> = ({
 
   // Thống kê nhanh
   const totalQuestions = history.length;
-  const correctAnswers = history.filter(h => h.selectedAnswerIndex === h.question.correctAnswerIndex).length;
+  const correctAnswers = history.filter(h => h.question.type === 'essay' ? h.isCorrect : h.selectedAnswerIndex === h.question.correctAnswerIndex).length;
   const accuracy = totalQuestions > 0 ? Math.round((correctAnswers / totalQuestions) * 100) : 0;
 
   return (
@@ -150,7 +150,7 @@ const HistoryModal: React.FC<HistoryModalProps> = ({
             </div>
           ) : (
             sortedHistory.map((item, idx) => {
-              const isCorrect = item.selectedAnswerIndex === item.question.correctAnswerIndex;
+              const isCorrect = item.question.type === 'essay' ? item.isCorrect : item.selectedAnswerIndex === item.question.correctAnswerIndex;
               return (
                 <div 
                   key={item.timestamp + idx} 
@@ -186,16 +186,6 @@ const HistoryModal: React.FC<HistoryModalProps> = ({
                     
                     {/* Question */}
                     <div className="flex flex-col md:flex-row gap-4 mb-3">
-                      {item.question.imageUrl && (
-                        <div className="w-full md:w-32 h-24 flex-shrink-0 rounded-lg overflow-hidden border border-slate-200">
-                          <img 
-                            src={item.question.imageUrl} 
-                            alt="Minh họa" 
-                            className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
-                          />
-                        </div>
-                      )}
                       <h3 className="font-bold text-slate-800 text-lg flex-1">{item.question.text}</h3>
                     </div>
                     
@@ -205,16 +195,16 @@ const HistoryModal: React.FC<HistoryModalProps> = ({
                         isCorrect ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
                       }`}>
                         <span className="block text-xs font-bold opacity-70 mb-1 uppercase">Bạn chọn</span>
-                        <span className={`font-semibold ${isCorrect ? 'text-green-800' : 'text-red-800 line-through'}`}>
-                          {item.question.options[item.selectedAnswerIndex]}
+                        <span className={`font-semibold ${isCorrect ? 'text-green-800' : 'text-red-800'}`}>
+                          {item.question.type === 'essay' ? item.studentAnswer : item.question.options?.[item.selectedAnswerIndex!]}
                         </span>
                       </div>
                       
-                      {!isCorrect && (
+                      {!isCorrect && item.question.type === 'multiple-choice' && (
                         <div className="p-3 rounded-lg border bg-green-50 border-green-200 text-sm">
                           <span className="block text-xs font-bold text-green-700 opacity-70 mb-1 uppercase">Đáp án đúng</span>
                           <span className="font-semibold text-green-800">
-                            {item.question.options[item.question.correctAnswerIndex]}
+                            {item.question.options?.[item.question.correctAnswerIndex!]}
                           </span>
                         </div>
                       )}
@@ -225,6 +215,14 @@ const HistoryModal: React.FC<HistoryModalProps> = ({
                       <div className="text-sm text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-100">
                         <span className="font-bold text-slate-700 mr-1">💡 Giải thích:</span>
                         {item.question.explanation}
+                      </div>
+                    )}
+
+                    {/* Feedback for Essay */}
+                    {item.question.type === 'essay' && item.feedback && (
+                      <div className="mt-2 text-sm text-slate-600 bg-indigo-50 p-3 rounded-lg border border-indigo-100">
+                        <span className="font-bold text-indigo-700 mr-1">📝 Nhận xét:</span>
+                        {item.feedback}
                       </div>
                     )}
                   </div>

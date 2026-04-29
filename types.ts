@@ -1,18 +1,24 @@
+export type QuestionType = 'multiple-choice' | 'essay';
+
 export interface Question {
+  type: QuestionType;
   text: string;
-  options: string[];
-  correctAnswerIndex: number;
+  options?: string[]; // Only for multiple-choice
+  correctAnswerIndex?: number; // Only for multiple-choice
+  sampleAnswer?: string; // Only for essay
   explanation: string;
   difficulty: number;
   topic: string;
   hint: string;     // Gợi ý khi trả lời sai
   funFact: string;  // Kiến thức thú vị mở rộng khi trả lời đúng
-  imageUrl?: string; // Hình ảnh minh họa (Base64 data URL)
 }
 
 export interface HistoryItem {
   question: Question;
-  selectedAnswerIndex: number;
+  selectedAnswerIndex?: number; // For multiple-choice
+  studentAnswer?: string; // For essay
+  isCorrect: boolean;
+  feedback?: string; // For essay
   timestamp: number;
 }
 
@@ -22,6 +28,7 @@ export enum GameState {
   ROLLING = 'ROLLING',
   FETCHING = 'FETCHING',
   ANSWERING = 'ANSWERING',
+  EVALUATING = 'EVALUATING',
   RESULT = 'RESULT',
   ERROR = 'ERROR'
 }

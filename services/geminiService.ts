@@ -10,22 +10,30 @@ const getAI = (apiKey: string) => {
 const questionSchema: Schema = {
   type: Type.OBJECT,
   properties: {
+    type: {
+      type: Type.STRING,
+      description: "Loại câu hỏi: 'multiple-choice' (trắc nghiệm) hoặc 'essay' (tự luận).",
+    },
     question: {
       type: Type.STRING,
-      description: "Nội dung câu hỏi trắc nghiệm Lịch sử bằng tiếng Việt.",
+      description: "Nội dung câu hỏi Lịch sử bằng tiếng Việt.",
     },
     options: {
       type: Type.ARRAY,
       items: { type: Type.STRING },
-      description: "Danh sách 4 lựa chọn trả lời.",
+      description: "Danh sách 4 lựa chọn trả lời (chỉ dành cho trắc nghiệm). Để trống nếu là tự luận.",
     },
     correctAnswerIndex: {
       type: Type.INTEGER,
-      description: "Chỉ số của câu trả lời đúng trong mảng options (0-3).",
+      description: "Chỉ số của câu trả lời đúng trong mảng options (0-3) (chỉ dành cho trắc nghiệm).",
+    },
+    sampleAnswer: {
+      type: Type.STRING,
+      description: "Câu trả lời mẫu hoặc các ý chính cần có (chỉ dành cho tự luận).",
     },
     explanation: {
       type: Type.STRING,
-      description: "Giải thích ngắn gọn tại sao đáp án đó đúng.",
+      description: "Giải thích ngắn gọn tại sao đáp án đó đúng hoặc giải thích cho câu hỏi tự luận.",
     },
     hint: {
       type: Type.STRING,
@@ -36,7 +44,7 @@ const questionSchema: Schema = {
       description: "Một sự thật lịch sử thú vị hoặc bối cảnh mở rộng liên quan đến câu hỏi này (Did you know?).",
     }
   },
-  required: ["question", "options", "correctAnswerIndex", "explanation", "hint", "funFact"],
+  required: ["type", "question", "explanation", "hint", "funFact"],
 };
 
 export const generateQuestion = async (apiKey: string, topic: string, difficulty: number, grade: string): Promise<Question> => {
@@ -46,8 +54,15 @@ export const generateQuestion = async (apiKey: string, topic: string, difficulty
       "Rất dễ", "Dễ", "Trung bình", "Khá khó", "Khó", "Rất khó"
     ][difficulty - 1];
 
+    // Increase probability of essay questions (e.g., 75% chance)
+    const targetType = Math.random() < 0.75 ? 'essay' : 'multiple-choice';
+    const typeInstruction = targetType === 'essay' 
+      ? "Tạo câu hỏi TỰ LUẬN (essay)." 
+      : "Tạo câu hỏi TRẮC NGHIỆM (multiple-choice).";
+
     const prompt = `
-      Bạn là giáo viên Lịch sử. Tạo 1 câu hỏi trắc nghiệm JSON tiếng Việt.
+      Bạn là giáo viên Lịch sử. Tạo 1 câu hỏi JSON tiếng Việt.
+      ${typeInstruction}
       - Chủ đề: "${topic}"
       - Lớp: ${grade}
       - Độ khó: ${difficulty}/6
@@ -59,7 +74,6 @@ export const generateQuestion = async (apiKey: string, topic: string, difficulty
       config: {
         responseMimeType: "application/json",
         responseSchema: questionSchema,
-        // Disable thinking for speed on simple/moderate questions
         thinkingConfig: difficulty <= 4 ? { thinkingBudget: 0 } : undefined, 
         systemInstruction: "Trả về JSON câu hỏi lịch sử chính xác."
       },
@@ -70,19 +84,17 @@ export const generateQuestion = async (apiKey: string, topic: string, difficulty
 
     const json = JSON.parse(textOutput);
     
-    // Note: Image is NO LONGER generated here to speed up initial response time.
-    // It will be handled asynchronously in the UI.
-    
     return {
+      type: json.type === 'essay' ? 'essay' : 'multiple-choice',
       text: json.question,
       options: json.options,
       correctAnswerIndex: json.correctAnswerIndex,
+      sampleAnswer: json.sampleAnswer,
       explanation: json.explanation,
       difficulty: difficulty,
       topic: topic,
       hint: json.hint || "Hãy đọc kỹ lại câu hỏi và các sự kiện liên quan.",
       funFact: json.funFact || "Lịch sử luôn chứa đựng những điều bất ngờ!",
-      imageUrl: undefined // Will be filled later
     };
 
   } catch (error: any) {
@@ -91,34 +103,44 @@ export const generateQuestion = async (apiKey: string, topic: string, difficulty
   }
 };
 
-export const generateImage = async (apiKey: string, prompt: string): Promise<string | undefined> => {
+export const evaluateEssay = async (apiKey: string, question: Question, studentAnswer: string) => {
   try {
     const ai = getAI(apiKey);
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
-      contents: {
-        parts: [
-          {
-            text: `A detailed, historical illustration for a history quiz. Topic: ${prompt}. Style: Realistic, educational, clear subject.`,
-          },
-        ],
+    const prompt = `
+      Bạn là giáo viên Lịch sử. Hãy chấm điểm câu trả lời tự luận của học sinh.
+      Câu hỏi: ${question.text}
+      Đáp án mẫu: ${question.sampleAnswer || question.explanation}
+      Câu trả lời của học sinh: ${studentAnswer}
+      
+      Hãy đánh giá xem câu trả lời của học sinh có đạt yêu cầu không (đúng ý chính).
+    `;
+    
+    const evaluationSchema: Schema = {
+      type: Type.OBJECT,
+      properties: {
+        isCorrect: { type: Type.BOOLEAN, description: "Đánh giá xem học sinh có trả lời đúng/đạt yêu cầu không" },
+        feedback: { type: Type.STRING, description: "Nhận xét ngắn gọn về câu trả lời của học sinh" },
       },
+      required: ["isCorrect", "feedback"]
+    };
+
+    const textResponse = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
       config: {
-        imageConfig: {
-          aspectRatio: "16:9",
-        },
+        responseMimeType: "application/json",
+        responseSchema: evaluationSchema,
+        systemInstruction: "Đánh giá công tâm, khuyến khích học sinh."
       },
     });
-    
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        return `data:image/png;base64,${part.inlineData.data}`;
-      }
-    }
-    return undefined;
-  } catch (error) {
-    console.error("Image generation failed:", error);
-    return undefined;
+
+    let textOutput = textResponse.text || "";
+    textOutput = textOutput.replace(/^```json\s*/, "").replace(/\s*```$/, "");
+
+    return JSON.parse(textOutput) as { isCorrect: boolean, feedback: string };
+  } catch (error: any) {
+    console.error("Gemini API Error:", error);
+    throw new Error(error.message || "Không thể chấm điểm lúc này.");
   }
 };
 

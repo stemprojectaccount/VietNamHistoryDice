@@ -6,6 +6,7 @@ import Dice from './components/Dice';
 import QuestionCard from './components/QuestionCard';
 import HistoryModal from './components/HistoryModal';
 import SummaryModal from './components/SummaryModal';
+import ProgressBar from './components/ProgressBar';
 import { 
   Dices, Trophy, Flame, ScrollText, AlertCircle, RefreshCw, 
   User, GraduationCap, History as HistoryIcon, Play, 
@@ -47,19 +48,16 @@ const BACKGROUNDS = [
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(GameState.SETUP);
   
-  // Logic: Check for Environment Variable first
-  const envKey = process.env.API_KEY; 
-  const isUsingEnvKey = !!(envKey && envKey.trim() !== "");
+  // Logic: Use environment variable for API key
+  const apiKey = "AIzaSyBXX6k9FWiWqcmwkZ0hOLrlvtNHagqeBkk";
 
   // User Inputs
-  const [apiKey, setApiKey] = useState<string>(isUsingEnvKey ? envKey : "");
   const [studentName, setStudentName] = useState<string>("");
   const [grade, setGrade] = useState<string>("Lớp 6"); 
   const [topic, setTopic] = useState<string>("");
   const [difficultyLevel, setDifficultyLevel] = useState<Difficulty>(Difficulty.EASY);
   
   // Validation Errors
-  const [apiKeyError, setApiKeyError] = useState<string>("");
   const [nameError, setNameError] = useState<string>("");
   const [topicError, setTopicError] = useState<string>("");
 
@@ -87,7 +85,6 @@ const App: React.FC = () => {
   const [volume, setVolume] = useState<number>(1.0); // 0.0 to 1.0
 
   // UI State
-  const [showApiKey, setShowApiKey] = useState(false);
   const [bgId, setBgId] = useState<string>('default'); // Background State
   const [showThemeModal, setShowThemeModal] = useState(false);
 
@@ -109,12 +106,6 @@ const App: React.FC = () => {
       const savedMute = localStorage.getItem('suca_muted');
       const savedVolume = localStorage.getItem('suca_volume');
       const savedBg = localStorage.getItem('suca_bgId'); // Load Background
-      
-      // Only load API Key from storage if NOT using Env Key
-      if (!isUsingEnvKey) {
-        const savedApiKey = localStorage.getItem('suca_apiKey');
-        if (savedApiKey) setApiKey(savedApiKey);
-      }
 
       // Session State
       const savedGameState = localStorage.getItem('suca_gameState');
@@ -191,7 +182,7 @@ const App: React.FC = () => {
     } catch (e) {
       console.error("Failed to load data", e);
     }
-  }, [isUsingEnvKey]);
+  }, []);
 
   // Save to LocalStorage on change
   useEffect(() => {
@@ -205,10 +196,6 @@ const App: React.FC = () => {
     localStorage.setItem('suca_muted', isMuted.toString());
     localStorage.setItem('suca_volume', volume.toString());
     localStorage.setItem('suca_bgId', bgId); // Save Background
-    
-    if (!isUsingEnvKey) {
-       localStorage.setItem('suca_apiKey', apiKey); 
-    }
 
     localStorage.setItem('suca_gameState', gameState);
     localStorage.setItem('suca_currentRoll', currentRoll.toString());
@@ -225,7 +212,7 @@ const App: React.FC = () => {
       localStorage.removeItem('suca_selectedAnswerIndex');
     }
 
-  }, [score, streak, history, studentName, grade, topic, isMuted, volume, gameState, currentRoll, currentQuestion, selectedAnswerIndex, apiKey, isUsingEnvKey, bgId]);
+  }, [score, streak, history, studentName, grade, topic, isMuted, volume, gameState, currentRoll, currentQuestion, selectedAnswerIndex, bgId]);
 
   // Fetch Question from Gemini
   // Memoized to prevent recreation on every render
@@ -239,13 +226,6 @@ const App: React.FC = () => {
       
       setCurrentQuestion(question);
       setGameState(GameState.ANSWERING);
-
-      // Fetch image in background to enhance visual learning
-      generateImage(apiKey, question.text).then(url => {
-        if (url) {
-          setCurrentQuestion(prev => prev && prev.text === question.text ? { ...prev, imageUrl: url } : prev);
-        }
-      });
 
     } catch (err: any) {
       console.error(err);
@@ -276,7 +256,7 @@ const App: React.FC = () => {
       setIsRolling(false);
       fetchQuestion(roll);
     }, 1500);
-  }, [gameState, fetchQuestion]); // Added fetchQuestion to dependencies
+  }, [gameState, fetchQuestion, difficultyLevel, sessionStats.totalQuestions]); 
 
   const handleRefreshQuestion = useCallback(() => {
     if (currentRoll > 0) {
@@ -288,20 +268,47 @@ const App: React.FC = () => {
   }, [currentRoll, fetchQuestion]);
 
   // Handle Answer Selection
-  const handleAnswer = useCallback((index: number, isRetry: boolean) => {
+  const handleAnswer = useCallback(async (answer: number | string, isRetry: boolean) => {
     if (gameState !== GameState.ANSWERING || !currentQuestion) return;
     
+    let isCorrect = false;
+    let feedback = "";
+    let index: number | null = null;
+    let studentAnswer = "";
+
+    if (currentQuestion.type === 'essay' && typeof answer === 'string') {
+      setGameState(GameState.EVALUATING);
+      try {
+        const { evaluateEssay } = await import('./services/geminiService');
+        const evaluation = await evaluateEssay(apiKey, currentQuestion, answer);
+        isCorrect = evaluation.isCorrect;
+        feedback = evaluation.feedback;
+        studentAnswer = answer;
+      } catch (err: any) {
+        console.error(err);
+        setErrorMsg(err.message || "Lỗi chấm điểm. Vui lòng thử lại.");
+        setGameState(GameState.ERROR);
+        return;
+      }
+    } else if (typeof answer === 'number') {
+      index = answer;
+      isCorrect = index === currentQuestion.correctAnswerIndex;
+    }
+
     setSelectedAnswerIndex(index);
     setGameState(GameState.RESULT);
 
     const newHistoryItem: HistoryItem = {
       question: currentQuestion,
-      selectedAnswerIndex: index,
+      selectedAnswerIndex: index !== null ? index : undefined,
+      studentAnswer: studentAnswer || undefined,
+      isCorrect,
+      feedback: feedback || undefined,
       timestamp: Date.now()
     };
     setHistory(prev => [newHistoryItem, ...prev]);
 
-    if (index === currentQuestion.correctAnswerIndex) {
+    if (isCorrect) {
       // Trigger Confetti
       confetti({
         particleCount: 100,
@@ -364,7 +371,7 @@ const App: React.FC = () => {
         };
       });
     }
-  }, [gameState, currentQuestion, difficultyLevel]); // Optimized dependencies
+  }, [gameState, currentQuestion, difficultyLevel, apiKey]); // Optimized dependencies
 
   const resetGame = () => {
     setGameState(GameState.SETUP);
@@ -404,12 +411,6 @@ const App: React.FC = () => {
     let isValid = true;
     setNameError("");
     setTopicError("");
-    setApiKeyError("");
-
-    if (!apiKey.trim()) {
-       setApiKeyError("Vui lòng nhập API Key để ứng dụng hoạt động.");
-       isValid = false;
-    }
 
     if (!studentName.trim()) {
       setNameError("Vui lòng nhập tên của bạn.");
@@ -604,46 +605,6 @@ const App: React.FC = () => {
               </div>
               
               <div className="space-y-6">
-
-                {/* API Key Input - Secure Area */}
-                {!isUsingEnvKey && (
-                  <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
-                    <label className="flex items-center justify-between text-sm font-bold text-slate-700 mb-2">
-                      <span className="flex items-center gap-2">
-                          <Key size={18} className="text-indigo-600" />
-                          Google Gemini API Key <span className="text-red-500">*</span>
-                      </span>
-                      <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-indigo-500 hover:underline text-xs flex items-center gap-1">
-                          Lấy Key <ExternalLink size={10} />
-                      </a>
-                    </label>
-                    <div className="relative">
-                      <input 
-                        type={showApiKey ? "text" : "password"}
-                        placeholder="Nhập khóa API của bạn..."
-                        value={apiKey}
-                        onChange={(e) => {
-                            setApiKey(e.target.value);
-                            if(apiKeyError) setApiKeyError("");
-                        }}
-                        className={`w-full p-3 pr-10 rounded-lg border ${apiKeyError ? 'border-red-500 focus:border-red-500 ring-red-100' : 'border-slate-300 focus:border-indigo-500 focus:ring-indigo-200'} bg-white focus:ring-2 outline-none transition-all font-mono text-sm`}
-                      />
-                      <button 
-                        type="button"
-                        onClick={() => setShowApiKey(!showApiKey)}
-                        className="absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-indigo-600 transition-colors"
-                      >
-                          {showApiKey ? <EyeOff size={18} /> : <Eye size={18} />}
-                      </button>
-                    </div>
-                    {apiKeyError && (
-                      <p className="text-red-500 text-xs mt-1 font-medium">{apiKeyError}</p>
-                    )}
-                    <p className="text-[10px] text-slate-400 mt-2">
-                      Key được lưu an toàn trong trình duyệt của bạn (LocalStorage).
-                    </p>
-                  </div>
-                )}
                 
                 {/* Name Input */}
                 <div>
@@ -791,20 +752,13 @@ const App: React.FC = () => {
                   <ScrollText size={16} className="text-amber-600" />
                   <span>{topic || "Lịch sử chung"}</span>
                 </div>
-                <div className="flex items-center gap-2 text-sm font-bold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full border border-indigo-100">
-                  <span>Câu {sessionStats.totalQuestions + (gameState === GameState.ANSWERING || gameState === GameState.RESULT ? 0 : 1)} {difficultyLevel !== Difficulty.INFINITY && `/ ${DIFFICULTY_SETTINGS[difficultyLevel].questions}`}</span>
-                </div>
               </div>
               
-              {/* Progress Bar */}
-              <div className="w-full max-w-4xl px-4">
-                <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden shadow-inner">
-                  <div 
-                    className="h-full bg-gradient-to-r from-amber-400 to-orange-500 transition-all duration-500 ease-out"
-                    style={{ width: difficultyLevel === Difficulty.INFINITY ? '100%' : `${(sessionStats.totalQuestions / DIFFICULTY_SETTINGS[difficultyLevel].questions) * 100}%` }}
-                  ></div>
-                </div>
-              </div>
+              <ProgressBar 
+                currentQuestionIndex={sessionStats.totalQuestions + (gameState === GameState.ANSWERING || gameState === GameState.RESULT || gameState === GameState.EVALUATING ? 0 : 1)}
+                totalQuestions={DIFFICULTY_SETTINGS[difficultyLevel].questions}
+                difficultyLevel={difficultyLevel}
+              />
             </div>
 
             {/* Dice Section */}
@@ -872,19 +826,19 @@ const App: React.FC = () => {
             )}
 
             {/* Loading State */}
-            {gameState === GameState.FETCHING && (
+            {(gameState === GameState.FETCHING || gameState === GameState.EVALUATING) && (
               <div className="flex flex-col items-center justify-center p-12 text-slate-500 gap-4 animate-pulse bg-white/50 rounded-xl border border-white/60">
                 <div className="w-12 h-12 border-4 border-amber-200 border-t-amber-600 rounded-full animate-spin"></div>
                 <p className="font-medium text-amber-800 flex items-center gap-2">
                    <Zap className="text-amber-500 animate-pulse" size={20} />
-                   Đang tạo câu hỏi...
+                   {gameState === GameState.EVALUATING ? "Đang chấm điểm..." : "Đang tạo câu hỏi..."}
                 </p>
                 <p className="text-xs text-slate-400">Chủ đề: {topic || "Lịch sử chung"}</p>
               </div>
             )}
 
             {/* Question Card */}
-            {(gameState === GameState.ANSWERING || gameState === GameState.RESULT) && currentQuestion && (
+            {(gameState === GameState.ANSWERING || gameState === GameState.RESULT || gameState === GameState.EVALUATING) && currentQuestion && (
               <QuestionCard 
                 question={currentQuestion}
                 selectedAnswerIndex={selectedAnswerIndex}
@@ -896,6 +850,8 @@ const App: React.FC = () => {
                 volume={volume}
                 apiKey={apiKey}
                 pointsEarned={pointsEarned}
+                feedback={history[0]?.question === currentQuestion ? history[0]?.feedback : undefined}
+                isCorrectEssay={history[0]?.question === currentQuestion ? history[0]?.isCorrect : undefined}
               />
             )}
             

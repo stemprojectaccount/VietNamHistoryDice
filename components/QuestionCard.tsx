@@ -1,12 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Question } from '../types';
-import { CheckCircle, XCircle, HelpCircle, RefreshCw, Lightbulb, Sparkles, Maximize2, X, Volume2, Square, Loader2, RotateCcw } from 'lucide-react';
+import { CheckCircle, XCircle, HelpCircle, RefreshCw, Lightbulb, Sparkles, Maximize2, X, Volume2, Square, Loader2, RotateCcw, Send } from 'lucide-react';
 import { generateSpeechFromText } from '../services/geminiService';
 
 interface QuestionCardProps {
   question: Question;
   selectedAnswerIndex: number | null;
-  onSelectAnswer: (index: number, isRetry: boolean) => void;
+  onSelectAnswer: (answer: number | string, isRetry: boolean) => void;
   isAnswered: boolean;
   onRetry: () => void;
   isMuted: boolean;
@@ -14,58 +14,12 @@ interface QuestionCardProps {
   apiKey: string;
   pointsEarned: number | null;
   onRefresh?: () => void;
+  feedback?: string;
+  isCorrectEssay?: boolean;
+  backgroundImageUrl?: string;
 }
 
 type AudioType = 'question' | 'explanation' | 'hint' | 'option-0' | 'option-1' | 'option-2' | 'option-3' | null;
-
-// --- Custom Hook for Parallax Effect ---
-const useParallax = () => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const imgRef = useRef<HTMLImageElement>(null);
-
-  useEffect(() => {
-    let animationFrameId: number;
-
-    const update = () => {
-      if (!containerRef.current || !imgRef.current) return;
-      
-      const rect = containerRef.current.getBoundingClientRect();
-      const viewHeight = window.innerHeight;
-
-      // Only calculate if the image is in the viewport
-      if (rect.top <= viewHeight && rect.bottom >= 0) {
-        // Speed factor: Lower is more subtle (0.05 = 5% of scroll speed)
-        const speed = 0.05; 
-        
-        // Calculate offset from the center of the viewport
-        const centerOffset = (viewHeight / 2) - (rect.top + rect.height / 2);
-        const y = centerOffset * speed;
-        
-        // Apply transform: Scale is needed to prevent edges from showing
-        imgRef.current.style.transform = `scale(1.15) translate3d(0, ${y}px, 0)`;
-      }
-    };
-
-    const onScroll = () => {
-      cancelAnimationFrame(animationFrameId);
-      animationFrameId = requestAnimationFrame(update);
-    };
-
-    window.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', onScroll);
-    
-    // Initial calculation
-    update();
-
-    return () => {
-      window.removeEventListener('scroll', onScroll);
-      window.removeEventListener('resize', onScroll);
-      cancelAnimationFrame(animationFrameId);
-    };
-  }, []);
-
-  return { containerRef, imgRef };
-};
 
 const QuestionCard: React.FC<QuestionCardProps> = React.memo(({ 
   question, 
@@ -77,12 +31,17 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
   volume,
   apiKey,
   pointsEarned,
-  onRefresh
+  onRefresh,
+  feedback,
+  isCorrectEssay,
+  backgroundImageUrl
 }) => {
   const [processingIndex, setProcessingIndex] = useState<number | null>(null);
   const [wrongIndices, setWrongIndices] = useState<number[]>([]);
   const [hasFailed, setHasFailed] = useState(false);
   const [isRetryAttempt, setIsRetryAttempt] = useState(false);
+  const [essayAnswer, setEssayAnswer] = useState("");
+  const [isSubmittingEssay, setIsSubmittingEssay] = useState(false);
   
   // Audio State
   const [isAudioLoading, setIsAudioLoading] = useState(false);
@@ -98,18 +57,20 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
   const startedAtRef = useRef<number>(0); 
   const isMounted = useRef(true);
 
-  // Use Parallax Hook for Main Image
-  const { containerRef: imageContainerRef, imgRef: imageRef } = useParallax();
-
   // Reset states when question changes
   useEffect(() => {
     setWrongIndices([]);
     setProcessingIndex(null);
     setHasFailed(false);
     setIsRetryAttempt(false);
+    setEssayAnswer("");
+    setIsSubmittingEssay(false);
   }, [question]);
 
-  const isCorrectFinal = isAnswered && selectedAnswerIndex === question.correctAnswerIndex;
+  const isCorrectFinal = isAnswered && (
+    (question.type === 'multiple-choice' && selectedAnswerIndex === question.correctAnswerIndex) ||
+    (question.type === 'essay' && isCorrectEssay)
+  );
 
   // --- AUDIO HELPERS ---
   const decodeBase64Audio = (base64: string): Uint8Array => {
@@ -450,11 +411,23 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
 
   return (
     <>
-      <div className="w-full max-w-4xl bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-200 animate-[fadeIn_0.5s_ease-out]">
+      <div 
+        className={`w-full max-w-4xl rounded-2xl shadow-xl overflow-hidden border animate-[fadeIn_0.5s_ease-out] relative ${backgroundImageUrl ? 'border-white/20' : 'bg-white border-slate-200'}`}
+        style={backgroundImageUrl ? {
+          backgroundImage: `url(${backgroundImageUrl})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center'
+        } : undefined}
+      >
         <style>{customKeyframes}</style>
         
-        {/* Header */}
-          <div className="bg-slate-50 p-6 border-b border-slate-100 flex justify-between items-center">
+        {backgroundImageUrl && (
+          <div className="absolute inset-0 bg-slate-900/75 z-0 pointer-events-none"></div>
+        )}
+        
+        <div className="relative z-10">
+          {/* Header */}
+          <div className={`p-6 border-b flex justify-between items-center ${backgroundImageUrl ? 'bg-black/30 border-white/10 backdrop-blur-sm' : 'bg-slate-50 border-slate-100'}`}>
             <div className="flex items-center gap-3">
               <span className={`px-3 py-1 rounded-full text-xs font-bold border uppercase tracking-wider ${difficultyColors[question.difficulty - 1]}`}>
                 Độ khó {question.difficulty}
@@ -462,21 +435,21 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
               {onRefresh && !isAnswered && (
                 <button 
                   onClick={() => { stopAIAudio(); onRefresh(); }}
-                  className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                  className={`p-1.5 rounded-lg transition-all ${backgroundImageUrl ? 'text-white/50 hover:text-white hover:bg-white/20' : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'}`}
                   title="Đổi câu hỏi khác"
                 >
                   <RefreshCw size={16} />
                 </button>
               )}
             </div>
-            <span className="text-slate-400 text-sm font-medium uppercase tracking-widest">{question.topic}</span>
+            <span className={`text-sm font-medium uppercase tracking-widest ${backgroundImageUrl ? 'text-slate-300' : 'text-slate-400'}`}>{question.topic}</span>
           </div>
 
         {/* Content */}
         <div className="p-6 md:p-8">
           
           <div className="flex items-start justify-between gap-4 mb-6">
-            <h2 key={question.text} className="text-xl md:text-2xl font-bold text-slate-800 leading-relaxed animate-[scaleIn_0.5s_ease-out]">
+            <h2 key={question.text} className={`text-xl md:text-2xl font-bold leading-relaxed animate-[scaleIn_0.5s_ease-out] ${backgroundImageUrl ? 'text-white' : 'text-slate-800'}`}>
               {question.text}
             </h2>
             <button 
@@ -485,55 +458,17 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
                 className={`flex-shrink-0 p-3 rounded-full transition-all ${
                     playingType === 'question' && isPlayingAI 
                     ? 'bg-amber-100 text-amber-600 animate-pulse' 
-                    : 'bg-slate-100 text-slate-400 hover:bg-indigo-100 hover:text-indigo-600'
+                    : backgroundImageUrl
+                      ? 'bg-white/10 text-white hover:bg-white/20'
+                      : 'bg-slate-100 text-slate-400 hover:bg-indigo-100 hover:text-indigo-600'
                 }`}
             >
                 {isAudioLoading && playingType === 'question' ? <Loader2 size={24} className="animate-spin" /> : playingType === 'question' && isPlayingAI ? <Square size={24} fill="currentColor" /> : <Volume2 size={24} />}
             </button>
           </div>
 
-          {/* Question Image with Loading State */}
-          <div 
-            ref={imageContainerRef}
-            className="mb-8 relative rounded-2xl overflow-hidden bg-slate-100 border border-slate-200 aspect-video shadow-inner group"
-          >
-            {question.imageUrl ? (
-              <img 
-                ref={imageRef}
-                src={question.imageUrl} 
-                alt="Minh họa lịch sử" 
-                className="w-full h-full object-cover transition-transform duration-700 ease-out"
-                referrerPolicy="no-referrer"
-              />
-            ) : (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-slate-400">
-                <div className="relative">
-                  <Sparkles className="w-12 h-12 animate-pulse text-amber-400" />
-                  <Loader2 className="w-12 h-12 animate-spin absolute inset-0 opacity-20" />
-                </div>
-                <div className="text-center">
-                  <p className="text-sm font-bold uppercase tracking-widest animate-pulse">Đang phác họa lịch sử...</p>
-                  <p className="text-[10px] opacity-60">AI đang tạo hình ảnh minh họa cho câu hỏi này</p>
-                </div>
-              </div>
-            )}
-            
-            {/* Overlay Gradient */}
-            <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-            
-            {/* Zoom Button */}
-            {question.imageUrl && (
-              <button 
-                onClick={() => window.open(question.imageUrl, '_blank')}
-                className="absolute bottom-4 right-4 p-2 bg-white/90 backdrop-blur-sm rounded-lg text-slate-700 opacity-0 group-hover:opacity-100 transition-all hover:bg-white shadow-lg translate-y-2 group-hover:translate-y-0"
-                title="Xem ảnh lớn"
-              >
-                <Maximize2 size={20} />
-              </button>
-            )}
-          </div>
-
-          <div className="space-y-3">
+          {question.type === 'multiple-choice' && question.options ? (
+            <div className="space-y-3">
             {question.options.map((option, index) => {
               const isProcessing = processingIndex === index;
               const isAnyProcessing = processingIndex !== null;
@@ -560,14 +495,14 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
                   btnClass += "bg-red-50 border-red-200 text-red-800 opacity-60";
                   if (isSelected) animationStyle = { animation: 'shake 0.5s cubic-bezier(.36,.07,.19,.97) both' };
                 } else {
-                  btnClass += "bg-white border-slate-100 text-slate-400 opacity-40";
+                  btnClass += backgroundImageUrl ? "bg-white/5 border-white/10 text-white/40 opacity-40" : "bg-white border-slate-100 text-slate-400 opacity-40";
                 }
               } else {
                 if (isWrong) {
                   btnClass += "bg-red-50 border-red-200 text-red-400 cursor-not-allowed opacity-80";
                   animationStyle = { animation: 'selectionShake 0.4s ease-in-out both' };
                 } else {
-                  btnClass += "bg-white border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/50 hover:-translate-y-1 hover:shadow-lg text-slate-700";
+                  btnClass += backgroundImageUrl ? "bg-white/10 border-white/20 hover:bg-white/20 hover:border-white/30 text-white backdrop-blur-sm" : "bg-white border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/50 hover:-translate-y-1 hover:shadow-lg text-slate-700";
                 }
               }
 
@@ -591,7 +526,7 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
                       <span className={`flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-sm font-bold ${
                          isCorrect || (isProcessing && index === question.correctAnswerIndex) ? 'bg-green-200 text-green-800' :
                          (isWrong || (isProcessing && index !== question.correctAnswerIndex)) ? 'bg-red-200 text-red-800' :
-                         'bg-slate-100 text-slate-500 group-hover:bg-indigo-100 group-hover:text-indigo-600'
+                         backgroundImageUrl ? 'bg-white/20 text-white group-hover:bg-white/30' : 'bg-slate-100 text-slate-500 group-hover:bg-indigo-100 group-hover:text-indigo-600'
                       }`}>
                         {String.fromCharCode(65 + index)}
                       </span>
@@ -608,7 +543,9 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
                         className={`p-2 rounded-full transition-all ${
                           playingType === `option-${index}` && isPlayingAI
                             ? 'bg-indigo-100 text-indigo-600 animate-pulse'
-                            : 'text-slate-300 hover:text-indigo-500 hover:bg-indigo-50'
+                            : backgroundImageUrl
+                              ? 'text-white/50 hover:text-white hover:bg-white/20'
+                              : 'text-slate-300 hover:text-indigo-500 hover:bg-indigo-50'
                         }`}
                       >
                         {isAudioLoading && playingType === `option-${index}` ? (
@@ -627,24 +564,63 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
               );
             })}
           </div>
+          ) : (
+            <div className="space-y-4">
+              <textarea
+                value={essayAnswer}
+                onChange={(e) => setEssayAnswer(e.target.value)}
+                disabled={isAnswered || isSubmittingEssay}
+                placeholder="Nhập câu trả lời của bạn vào đây..."
+                className={`w-full min-h-[150px] p-4 rounded-xl border-2 focus:ring-4 transition-all resize-y disabled:opacity-70 ${
+                  backgroundImageUrl 
+                  ? 'bg-white/10 border-white/20 text-white placeholder-white/50 focus:border-white/50 focus:ring-white/20 disabled:bg-white/5' 
+                  : 'border-slate-200 focus:border-indigo-500 focus:ring-indigo-500/20 text-slate-700 disabled:bg-slate-50'
+                }`}
+              />
+              {!isAnswered && (
+                <button
+                  onClick={async () => {
+                    if (!essayAnswer.trim()) return;
+                    setIsSubmittingEssay(true);
+                    await onSelectAnswer(essayAnswer, isRetryAttempt);
+                    setIsSubmittingEssay(false);
+                  }}
+                  disabled={!essayAnswer.trim() || isSubmittingEssay}
+                  className="w-full py-3 px-6 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-200 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {isSubmittingEssay ? (
+                    <>
+                      <Loader2 size={20} className="animate-spin" />
+                      Đang chấm điểm...
+                    </>
+                  ) : (
+                    <>
+                      <Send size={20} />
+                      Gửi câu trả lời
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          )}
 
-          {!isAnswered && hasFailed && (
+          {!isAnswered && hasFailed && question.type === 'multiple-choice' && (
             <div className="mt-6 animate-[fadeInUp_0.3s_ease-out]">
-              <div className="p-5 bg-rose-50 rounded-2xl border border-rose-200 flex flex-col items-center gap-4 text-center">
-                <div className="flex items-center gap-2 text-rose-700 font-bold">
+              <div className={`p-5 rounded-2xl border flex flex-col items-center gap-4 text-center ${backgroundImageUrl ? 'bg-rose-900/40 border-rose-500/30 backdrop-blur-md' : 'bg-rose-50 border-rose-200'}`}>
+                <div className={`flex items-center gap-2 font-bold ${backgroundImageUrl ? 'text-rose-400' : 'text-rose-700'}`}>
                   <XCircle className="text-rose-500" size={24} />
                   <span>Câu trả lời chưa chính xác!</span>
                 </div>
                 <div className="flex flex-col items-center gap-3">
-                  <div className="flex items-center gap-3 bg-white/50 px-4 py-2 rounded-xl border border-rose-100">
-                    <p className="text-rose-600 text-sm italic font-medium">"{question.hint}"</p>
+                  <div className={`flex items-center gap-3 px-4 py-2 rounded-xl border ${backgroundImageUrl ? 'bg-black/40 border-rose-500/20' : 'bg-white/50 border-rose-100'}`}>
+                    <p className={`text-sm italic font-medium ${backgroundImageUrl ? 'text-rose-300' : 'text-rose-600'}`}>"{question.hint}"</p>
                     <button 
                       onClick={playingType === 'hint' && isPlayingAI ? stopAIAudio : () => triggerAIVoice(false)}
                       disabled={isAudioLoading && playingType !== 'hint'}
                       className={`flex-shrink-0 p-2 rounded-full transition-all ${
                         playingType === 'hint' && isPlayingAI 
                         ? 'bg-rose-200 text-rose-700 animate-pulse' 
-                        : 'bg-rose-100 text-rose-400 hover:text-rose-600'
+                        : backgroundImageUrl ? 'bg-rose-900/50 text-rose-300 hover:text-rose-200' : 'bg-rose-100 text-rose-400 hover:text-rose-600'
                       }`}
                       title="Nghe gợi ý"
                     >
@@ -669,11 +645,11 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
 
           {!isAnswered && !hasFailed && wrongIndices.length > 0 && (
             <div className="mt-6 animate-[fadeInUp_0.3s_ease-out]">
-              <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 flex items-start gap-3 relative">
+              <div className={`p-4 rounded-xl border flex items-start gap-3 relative ${backgroundImageUrl ? 'bg-amber-900/40 border-amber-500/30 backdrop-blur-md' : 'bg-amber-50 border-amber-200'}`}>
                 <Lightbulb className="w-6 h-6 text-amber-500 flex-shrink-0 animate-pulse" />
                 <div className="flex-1">
-                  <h3 className="font-bold text-amber-800 mb-1">Gợi ý nhỏ:</h3>
-                  <p className="text-amber-800 text-sm">{question.hint}</p>
+                  <h3 className={`font-bold mb-1 ${backgroundImageUrl ? 'text-amber-400' : 'text-amber-800'}`}>Gợi ý nhỏ:</h3>
+                  <p className={`text-sm ${backgroundImageUrl ? 'text-amber-100' : 'text-amber-800'}`}>{question.hint}</p>
                 </div>
                 <div className="flex flex-col items-center justify-center ml-2 pl-2 border-l border-amber-200 gap-2">
                    {isAudioLoading && playingType === 'hint' ? <Loader2 className="animate-spin text-amber-500" size={20} /> : isPlayingAI && playingType === 'hint' ? (
@@ -691,32 +667,56 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
           {isAnswered && (
             <div className="mt-8 space-y-6">
               
+              {/* ESSAY FEEDBACK BLOCK */}
+              {question.type === 'essay' && feedback && (
+                <div className={`p-6 rounded-2xl border animate-[smoothReveal_0.6s_cubic-bezier(0.22,1,0.36,1)_both] relative ${
+                  isCorrectEssay 
+                    ? (backgroundImageUrl ? 'bg-emerald-900/60 border-emerald-500/30 backdrop-blur-md' : 'bg-emerald-50 border-emerald-200') 
+                    : (backgroundImageUrl ? 'bg-rose-900/60 border-rose-500/30 backdrop-blur-md' : 'bg-rose-50 border-rose-200')
+                }`}>
+                  {pointsEarned !== null && (
+                    <div className={`absolute -top-3 right-6 px-4 py-1.5 rounded-full font-black text-sm shadow-md animate-[bounce_1s_infinite] ${pointsEarned > 0 ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'}`}>
+                      {pointsEarned > 0 ? `+${pointsEarned} điểm` : '0 điểm'}
+                    </div>
+                  )}
+                  <div className="flex flex-col gap-4">
+                    <div className="flex-1">
+                      <h3 className={`font-bold mb-2 flex items-center gap-2 text-lg ${isCorrectEssay ? (backgroundImageUrl ? 'text-emerald-400' : 'text-emerald-900') : (backgroundImageUrl ? 'text-rose-400' : 'text-rose-900')}`}>
+                        {isCorrectEssay ? <CheckCircle size={22} className="text-emerald-500" /> : <XCircle size={22} className="text-rose-500" />} 
+                        Nhận xét:
+                      </h3>
+                      <p className={`text-sm md:text-base leading-relaxed ${isCorrectEssay ? (backgroundImageUrl ? 'text-emerald-100' : 'text-emerald-800') : (backgroundImageUrl ? 'text-rose-100' : 'text-rose-800')}`}>{feedback}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* EXPLANATION BLOCK */}
-              <div className="p-6 bg-indigo-50 rounded-2xl border border-indigo-100 animate-[smoothReveal_0.6s_cubic-bezier(0.22,1,0.36,1)_both] relative">
-                {pointsEarned !== null && (
+              <div className={`p-6 rounded-2xl border animate-[smoothReveal_0.6s_cubic-bezier(0.22,1,0.36,1)_both] relative ${backgroundImageUrl ? 'bg-indigo-900/60 border-indigo-500/30 backdrop-blur-md' : 'bg-indigo-50 border-indigo-100'}`}>
+                {pointsEarned !== null && question.type === 'multiple-choice' && (
                   <div className={`absolute -top-3 right-6 px-4 py-1.5 rounded-full font-black text-sm shadow-md animate-[bounce_1s_infinite] ${pointsEarned > 0 ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'}`}>
                     {pointsEarned > 0 ? `+${pointsEarned} điểm` : '0 điểm'}
                   </div>
                 )}
                 <div className="flex flex-col gap-4">
                   <div className="flex-1">
-                    <h3 className="font-bold text-indigo-900 mb-2 flex items-center gap-2 text-lg">
+                    <h3 className={`font-bold mb-2 flex items-center gap-2 text-lg ${backgroundImageUrl ? 'text-indigo-300' : 'text-indigo-900'}`}>
                       <HelpCircle size={22} className="text-indigo-500" /> Giải thích:
                     </h3>
-                    <p className="text-indigo-800 text-sm md:text-base leading-relaxed">{question.explanation}</p>
+                    <p className={`text-sm md:text-base leading-relaxed ${backgroundImageUrl ? 'text-indigo-100' : 'text-indigo-800'}`}>{question.explanation}</p>
                     
                     {/* Audio Controls for Explanation */}
                     <div className="mt-4 flex items-center gap-3">
                        {isAudioLoading && playingType === 'explanation' ? (
-                         <div className="flex items-center gap-2 text-indigo-400">
+                         <div className={`flex items-center gap-2 ${backgroundImageUrl ? 'text-indigo-300' : 'text-indigo-400'}`}>
                            <Loader2 className="animate-spin" size={20} />
                            <span className="text-xs font-bold uppercase">Đang đọc...</span>
                          </div>
                        ) : isPlayingAI && playingType === 'explanation' ? (
-                         <div className="flex items-center gap-2 bg-white/60 p-1.5 px-3 rounded-full border border-indigo-200 shadow-sm">
-                           <button onClick={stopAIAudio} className="text-indigo-600 hover:text-indigo-800 transition-colors" title="Dừng đọc"><Square size={18} fill="currentColor" /></button>
-                           <button onClick={handleRewind} className="text-indigo-500 hover:text-indigo-700 transition-colors" title="Tua lại 5 giây"><RotateCcw size={18} /></button>
-                           <div className="w-px h-4 bg-indigo-200 mx-1"></div>
+                         <div className={`flex items-center gap-2 p-1.5 px-3 rounded-full border shadow-sm ${backgroundImageUrl ? 'bg-black/40 border-indigo-500/30' : 'bg-white/60 border-indigo-200'}`}>
+                           <button onClick={stopAIAudio} className={`transition-colors ${backgroundImageUrl ? 'text-indigo-400 hover:text-indigo-300' : 'text-indigo-600 hover:text-indigo-800'}`} title="Dừng đọc"><Square size={18} fill="currentColor" /></button>
+                           <button onClick={handleRewind} className={`transition-colors ${backgroundImageUrl ? 'text-indigo-400 hover:text-indigo-300' : 'text-indigo-500 hover:text-indigo-700'}`} title="Tua lại 5 giây"><RotateCcw size={18} /></button>
+                           <div className={`w-px h-4 mx-1 ${backgroundImageUrl ? 'bg-indigo-500/30' : 'bg-indigo-200'}`}></div>
                            <input type="range" min="0" max="1" step="0.1" value={aiVolume} onChange={(e) => setAiVolume(parseFloat(e.target.value))} className="w-16 h-1 bg-indigo-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" title="Âm lượng giọng đọc" />
                          </div>
                        ) : (
@@ -731,27 +731,27 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
 
               {/* FUN FACT BLOCK */}
               {isCorrectFinal && question.funFact && (
-                <div className="p-6 bg-emerald-50 rounded-2xl border border-emerald-100 relative overflow-hidden animate-[smoothReveal_0.6s_cubic-bezier(0.22,1,0.36,1)_both]" style={{ animationDelay: '250ms' }}>
+                <div className={`p-6 rounded-2xl border relative overflow-hidden animate-[smoothReveal_0.6s_cubic-bezier(0.22,1,0.36,1)_both] ${backgroundImageUrl ? 'bg-emerald-900/60 border-emerald-500/30 backdrop-blur-md' : 'bg-emerald-50 border-emerald-100'}`} style={{ animationDelay: '250ms' }}>
                   <div className="absolute -right-8 -top-8 text-emerald-100 opacity-40 rotate-12 scale-150"><Sparkles size={100} /></div>
                   
                   <div className="relative z-10">
                     <div className="flex items-center gap-3 mb-2">
                       <Sparkles className="w-6 h-6 text-emerald-600" />
-                      <h3 className="font-bold text-emerald-900 text-lg">Có thể bạn chưa biết:</h3>
+                      <h3 className={`font-bold text-lg ${backgroundImageUrl ? 'text-emerald-400' : 'text-emerald-900'}`}>Có thể bạn chưa biết:</h3>
                     </div>
-                    <p className="text-emerald-800 text-sm md:text-base leading-relaxed italic font-medium">"{question.funFact}"</p>
+                    <p className={`text-sm md:text-base leading-relaxed italic font-medium ${backgroundImageUrl ? 'text-emerald-100' : 'text-emerald-800'}`}>"{question.funFact}"</p>
                   </div>
                 </div>
               )}
 
               {/* ACTION AREA */}
-              <div className="flex flex-col sm:flex-row justify-end gap-3 pt-6 border-t border-slate-100 animate-[smoothReveal_0.6s_cubic-bezier(0.22,1,0.36,1)_both]" style={{ animationDelay: '450ms' }}>
+              <div className={`flex flex-col sm:flex-row justify-end gap-3 pt-6 border-t animate-[smoothReveal_0.6s_cubic-bezier(0.22,1,0.36,1)_both] ${backgroundImageUrl ? 'border-white/10' : 'border-slate-100'}`} style={{ animationDelay: '450ms' }}>
                 {onRefresh && (
                   <button 
                     onClick={() => { stopAIAudio(); onRefresh(); }}
-                    className="flex-1 py-4 bg-white border-2 border-slate-200 hover:border-indigo-400 text-slate-700 font-bold rounded-2xl transition-all active:scale-95 flex items-center justify-center gap-2"
+                    className={`flex-1 py-4 border-2 font-bold rounded-2xl transition-all active:scale-95 flex items-center justify-center gap-2 ${backgroundImageUrl ? 'bg-white/10 border-white/20 text-white hover:bg-white/20' : 'bg-white border-slate-200 hover:border-indigo-400 text-slate-700'}`}
                   >
-                    Thử lại lượt này <RefreshCw size={20} className="text-indigo-500" />
+                    Thử lại lượt này <RefreshCw size={20} className={backgroundImageUrl ? 'text-white/70' : 'text-indigo-500'} />
                   </button>
                 )}
                 <button onClick={handleRetryClick} className="flex items-center justify-center gap-2 px-8 py-4 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-extrabold rounded-2xl shadow-xl transition-all transform active:scale-95 w-full sm:w-auto hover:-translate-y-1">
@@ -760,6 +760,7 @@ const QuestionCard: React.FC<QuestionCardProps> = React.memo(({
               </div>
             </div>
           )}
+        </div>
         </div>
       </div>
     </>
