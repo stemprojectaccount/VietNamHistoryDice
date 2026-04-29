@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import confetti from 'canvas-confetti';
 import { GameState, Question, HistoryItem, Difficulty } from './types';
-import { generateQuestion, generateImage } from './services/geminiService';
+import { generateQuestion } from './services/geminiService';
 import Dice from './components/Dice';
 import QuestionCard from './components/QuestionCard';
 import HistoryModal from './components/HistoryModal';
@@ -49,7 +49,7 @@ const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(GameState.SETUP);
   
   // Logic: Use environment variable for API key
-  const apiKey = "AIzaSyBXX6k9FWiWqcmwkZ0hOLrlvtNHagqeBkk";
+  const apiKey = process.env.GEMINI_API_KEY || "";
 
   // User Inputs
   const [studentName, setStudentName] = useState<string>("");

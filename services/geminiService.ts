@@ -99,7 +99,23 @@ export const generateQuestion = async (apiKey: string, topic: string, difficulty
 
   } catch (error: any) {
     console.error("Gemini API Error:", error);
-    throw new Error(error.message || "Không thể tạo câu hỏi lúc này.");
+    let errorMessage = error.message || "Không thể tạo câu hỏi lúc này.";
+    try {
+      const parsed = JSON.parse(errorMessage);
+      if (parsed.error && parsed.error.message) {
+        errorMessage = parsed.error.message;
+      }
+    } catch (e) {}
+
+    if (errorMessage.includes("API_KEY_INVALID") || errorMessage.includes("API key not valid")) {
+      errorMessage = "API Key không hợp lệ. Vui lòng kiểm tra lại.";
+    } else if (errorMessage.includes("leaked") || errorMessage.includes("PERMISSION_DENIED")) {
+      errorMessage = "API Key đã bị vô hiệu hóa hoặc bị lộ. Vui lòng tạo khóa mới.";
+    } else if (errorMessage.includes("fetch failed")) {
+      errorMessage = "Lỗi kết nối mạng. Vui lòng kiểm tra lại wifi/3g.";
+    }
+    
+    throw new Error(errorMessage);
   }
 };
 
@@ -140,7 +156,23 @@ export const evaluateEssay = async (apiKey: string, question: Question, studentA
     return JSON.parse(textOutput) as { isCorrect: boolean, feedback: string };
   } catch (error: any) {
     console.error("Gemini API Error:", error);
-    throw new Error(error.message || "Không thể chấm điểm lúc này.");
+    let errorMessage = error.message || "Không thể chấm điểm lúc này.";
+    try {
+      const parsed = JSON.parse(errorMessage);
+      if (parsed.error && parsed.error.message) {
+        errorMessage = parsed.error.message;
+      }
+    } catch (e) {}
+
+    if (errorMessage.includes("API_KEY_INVALID") || errorMessage.includes("API key not valid")) {
+      errorMessage = "API Key không hợp lệ. Vui lòng kiểm tra lại.";
+    } else if (errorMessage.includes("leaked") || errorMessage.includes("PERMISSION_DENIED")) {
+      errorMessage = "API Key đã bị vô hiệu hóa hoặc bị lộ. Vui lòng tạo khóa mới.";
+    } else if (errorMessage.includes("fetch failed")) {
+      errorMessage = "Lỗi kết nối mạng. Vui lòng kiểm tra lại wifi/3g.";
+    }
+    
+    throw new Error(errorMessage);
   }
 };
 
