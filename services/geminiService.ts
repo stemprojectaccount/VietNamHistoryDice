@@ -3,7 +3,7 @@ import { Question } from '../types';
 
 // Helper to get AI instance dynamically
 const getAI = (apiKey: string) => {
-  if (!apiKey) throw new Error("Vui lòng nhập Google Gemini API Key để bắt đầu.");
+  if (!apiKey) throw new Error("Missing API Key.");
   return new GoogleGenAI({ apiKey });
 };
 
